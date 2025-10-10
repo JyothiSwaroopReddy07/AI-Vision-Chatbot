@@ -1,0 +1,104 @@
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+websockets==12.0
+
+# Database
+sqlalchemy==2.0.23
+alembic==1.12.1
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+
+# Redis
+redis==5.0.1
+hiredis==2.2.3
+
+# Celery
+celery==5.3.4
+flower==2.0.1
+
+# LangChain & AI
+langchain==0.1.0
+langchain-community==0.0.10
+langchain-openai==0.0.2
+openai==1.6.1
+tiktoken==0.5.2
+
+# Vector Database
+chromadb==0.4.18
+
+# Embeddings & NLP
+sentence-transformers==2.5.1
+transformers==4.36.2
+torch==2.1.2
+accelerate==0.25.0
+huggingface_hub==0.20.3
+
+# Document Processing
+pypdf2==3.0.1
+pdfplumber==0.10.3
+python-docx==1.1.0
+python-pptx==0.6.23
+
+# OCR
+pytesseract==0.3.10
+pillow==10.1.0
+pdf2image==1.16.3
+
+# PubMed Integration
+biopython==1.81
+pubmed-parser==0.3.1
+requests==2.31.0
+
+# Pathway Analysis
+gseapy==1.1.2
+scipy==1.11.4
+numpy==1.26.2
+pandas==2.1.4
+networkx==3.2.1
+
+# Bioinformatics
+bioservices==1.11.2
+mygene==3.2.2
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.0
+pydantic==2.5.2
+pydantic-settings==2.1.0
+
+# Utilities
+python-slugify==8.0.1
+pytz==2023.3
+httpx==0.25.2
+aiofiles==23.2.1
+tenacity==8.2.3
+
+# Monitoring & Logging
+prometheus-client==0.19.0
+python-json-logger==2.0.7
+sentry-sdk[fastapi]==1.39.1
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+httpx==0.25.2
+faker==20.1.0
+
+# Code Quality
+black==23.12.0
+isort==5.13.2
+flake8==6.1.0
+mypy==1.7.1
+pylint==3.0.3
+
+# Documentation
+pydantic[email]==2.5.2
+
+# Progress bars
+tqdm==4.66.1
+
