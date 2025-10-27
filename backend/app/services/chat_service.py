@@ -63,10 +63,19 @@ class ChatService:
         Returns:
             ChatSession object or None
         """
+        from app.models.chat import ChatMessage
+        from uuid import UUID
+        
+        # Convert string IDs to UUID
+        session_uuid = UUID(session_id) if isinstance(session_id, str) else session_id
+        user_uuid = UUID(user_id) if isinstance(user_id, str) else user_id
+        
         result = await db.execute(
             select(ChatSession)
-            .where(ChatSession.id == session_id, ChatSession.user_id == user_id)
-            .options(selectinload(ChatSession.messages))
+            .where(ChatSession.id == session_uuid, ChatSession.user_id == user_uuid)
+            .options(
+                selectinload(ChatSession.messages).selectinload(ChatMessage.citations)
+            )
         )
         return result.scalar_one_or_none()
     
@@ -147,14 +156,34 @@ class ChatService:
             message_id: Message ID
             citations: List of citation dictionaries
         """
+        from datetime import date
+        
         for citation_data in citations:
+            # Parse publication_date if it's a string
+            pub_date = citation_data.get("publication_date")
+            if pub_date and isinstance(pub_date, str):
+                try:
+                    # Try to parse year only (e.g., "1988")
+                    if len(pub_date) == 4 and pub_date.isdigit():
+                        pub_date = date(int(pub_date), 1, 1)
+                    elif '-' in pub_date:
+                        # Try YYYY-MM-DD format
+                        parts = pub_date.split('-')
+                        pub_date = date(int(parts[0]), int(parts[1]) if len(parts) > 1 else 1, int(parts[2]) if len(parts) > 2 else 1)
+                    else:
+                        # Can't parse, set to None
+                        pub_date = None
+                except:
+                    # If parsing fails, set to None
+                    pub_date = None
+            
             citation = Citation(
                 message_id=message_id,
                 source_type=citation_data.get("source_type"),
                 source_id=citation_data.get("source_id"),
                 title=citation_data.get("title"),
                 authors=citation_data.get("authors"),
-                publication_date=citation_data.get("publication_date"),
+                publication_date=pub_date,
                 journal=citation_data.get("journal"),
                 url=citation_data.get("url"),
                 excerpt=citation_data.get("excerpt"),
@@ -171,7 +200,7 @@ class ChatService:
         collection_names: List[str]
     ) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
         """
-        Generate RAG response with REAL document retrieval
+        Generate RAG response using LLM with retrieved documents
         
         Args:
             message: User message
@@ -182,48 +211,40 @@ class ChatService:
             Tuple of (answer, citations, source_documents)
         """
         try:
-            # Search vector store for relevant documents
-            citations = self._generate_multiple_citations(message)
+            # Use the proper RAG chain with LLM
+            from app.rag.chain import get_rag_chain
             
-            # If we have citations, use them to generate an informed response
-            if citations:
-                # Extract key information from retrieved documents
-                context_snippets = []
-                for i, citation in enumerate(citations[:3], 1):  # Use top 3
-                    context_snippets.append(f"[{i}] {citation['title']}: {citation['excerpt'][:150]}...")
-                
-                context = "\n".join(context_snippets)
-                
-                # Generate response based on retrieved context
-                answer = f"Based on recent research in vision science:\n\n"
-                
-                # Provide a contextualized answer
-                if any(keyword in message.lower() for keyword in ["what is", "explain", "tell me about"]):
-                    answer += self._generate_contextual_explanation(message, citations)
-                elif any(keyword in message.lower() for keyword in ["how", "mechanism", "process"]):
-                    answer += self._generate_mechanism_explanation(message, citations)
-                elif any(keyword in message.lower() for keyword in ["latest", "recent", "new", "advances"]):
-                    answer += self._generate_recent_advances(message, citations)
-                else:
-                    answer += self._generate_general_answer(message, citations)
-                
-                # Add references to citations in text
-                if len(citations) >= 3:
-                    answer += f"\n\nThese findings are supported by recent studies [1][2][3]."
-                elif len(citations) >= 1:
-                    answer += f"\n\nThis information is based on current research [1]."
-                
-                source_docs = [{"content": c["excerpt"], "metadata": c} for c in citations]
-            else:
-                # Fallback if no citations found
-                answer = self._generate_smart_response(message, chat_history)
-                source_docs = []
+            rag_chain = get_rag_chain()
+            
+            # Convert chat history format
+            history_tuples = []
+            for msg in chat_history[-5:]:  # Last 5 messages
+                if msg.get("role") == "user":
+                    history_tuples.append((msg.get("content", ""), ""))
+                elif msg.get("role") == "assistant":
+                    if history_tuples:
+                        history_tuples[-1] = (history_tuples[-1][0], msg.get("content", ""))
+            
+            # Query the RAG chain with LLM
+            result = rag_chain.query_with_custom_retrieval(
+                question=message,
+                collection_names=collection_names,
+                k=5,
+                chat_history=chat_history
+            )
+            
+            answer = result["answer"]
+            citations = result["citations"]
+            source_docs = result["source_documents"]
             
             return answer, citations, source_docs
             
         except Exception as e:
             print(f"Error in _generate_rag_response: {e}")
-            return f"I apologize, but I encountered an error while processing your request. Please try again.", [], []
+            import traceback
+            traceback.print_exc()
+            # Fallback to simple response
+            return f"I apologize, but I encountered an error while processing your request: {str(e)}. Please try again.", [], []
     
     def _generate_contextual_explanation(self, message: str, citations: List[Dict[str, Any]]) -> str:
         """Generate explanation based on retrieved research"""
@@ -353,15 +374,40 @@ class ChatService:
             Dictionary with response and metadata
         """
         try:
-            # Create or get session
+            # Get existing session or prepare to create new one
             if session_id:
                 session = await self.get_session(db, session_id, str(user.id))
                 if not session:
                     raise ValueError("Session not found")
             else:
-                session = await self.create_session(db, user)
+                # Only create session when we actually have a message to add
+                # Generate a title from the first message
+                title = message[:50] + "..." if len(message) > 50 else message
+                session = await self.create_session(db, user, title=title)
             
-            # Add user message
+            # Build chat history for context BEFORE adding the current message
+            # This way the current question isn't included in the context
+            chat_history = []
+            if session_id:
+                # For existing sessions, get the message history
+                from sqlalchemy import select
+                from app.models.chat import ChatMessage
+                
+                result = await db.execute(
+                    select(ChatMessage)
+                    .where(ChatMessage.session_id == str(session.id))
+                    .order_by(ChatMessage.created_at)
+                )
+                messages = result.scalars().all()
+                
+                # Build history from existing messages (last 10 messages for context)
+                for msg in messages[-10:]:
+                    chat_history.append({
+                        "role": msg.role,
+                        "content": msg.content
+                    })
+            
+            # Now add the current user message
             user_message = await self.add_message(
                 db=db,
                 session_id=str(session.id),
@@ -369,10 +415,24 @@ class ChatService:
                 content=message
             )
             
-            # Generate RAG response (without chat history for now)
-            answer, citations, source_docs = await self._generate_rag_response(
-                message, [], collection_names or ["pubmed_abstracts", "user_uploads"]
-            )
+            # Check if it's a simple greeting or casual message
+            message_lower = message.lower().strip()
+            is_greeting = any(word in message_lower for word in [
+                "hi", "hello", "hey", "greetings", "good morning", "good afternoon", 
+                "good evening", "howdy", "sup", "what's up", "whats up"
+            ])
+            is_simple_message = len(message.split()) <= 3 and not any(char in message for char in ["?", "what", "how", "why", "when", "where"])
+            
+            # Handle greetings without RAG
+            if is_greeting and is_simple_message:
+                answer = "Hello! I'm your vision research assistant, trained on PubMed scientific literature. I can help you with questions about:\n\n• Eye biology and anatomy\n• Vision disorders and diseases\n• Ophthalmology research\n• Retinal diseases (AMD, diabetic retinopathy, etc.)\n• Glaucoma and optic nerve disorders\n• Gene therapy and CRISPR for eye diseases\n• Single-cell research in vision\n\nWhat would you like to know about vision research?"
+                citations = []
+                source_docs = []
+            else:
+                # Generate RAG response with chat history for context
+                answer, citations, source_docs = await self._generate_rag_response(
+                    message, chat_history, collection_names or ["pubmed_vision_research"]
+                )
             
             # Add assistant message
             assistant_message = await self.add_message(
@@ -383,7 +443,7 @@ class ChatService:
                 metadata={
                     "model": "vision_rag",
                     "retrieval_k": retrieval_k or settings.RETRIEVAL_K,
-                    "collections": collection_names or ["pubmed_abstracts", "user_uploads"],
+                    "collections": collection_names or ["pubmed_vision_research"],
                     "source_documents": len(source_docs)
                 }
             )

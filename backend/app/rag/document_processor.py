@@ -1,10 +1,13 @@
 """Document processing for RAG pipeline"""
 
 import os
-from typing import List, Optional
+import io
+import re
+from typing import List, Optional, Tuple
 from pathlib import Path
 import PyPDF2
 import pdfplumber
+import fitz  # PyMuPDF
 import docx
 from PIL import Image
 import pytesseract
@@ -71,39 +74,136 @@ class DocumentProcessor:
     
     def extract_text_from_pdf(self, file_path: str) -> str:
         """
-        Extract text from PDF file
+        Extract text from PDF using multiple methods with fallbacks
         
         Args:
-            file_path: Path to PDF file
+            file_path: Path to the PDF file
             
         Returns:
             Extracted text
         """
         text = ""
         
-        # Try with pdfplumber first (better for complex PDFs)
+        # Method 1: PyMuPDF (fitz) - Best for most PDFs
         try:
-            with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n\n"
+            text = self._extract_with_pymupdf(file_path)
+            if self._is_text_quality_good(text):
+                print(f"✅ PyMuPDF extraction successful: {len(text)} chars")
+                return text
         except Exception as e:
-            print(f"pdfplumber failed, trying PyPDF2: {e}")
-            
-            # Fallback to PyPDF2
-            try:
-                with open(file_path, 'rb') as file:
-                    pdf_reader = PyPDF2.PdfReader(file)
-                    for page in pdf_reader.pages:
-                        page_text = page.extract_text()
-                        if page_text:
-                            text += page_text + "\n\n"
-            except Exception as e:
-                print(f"PyPDF2 also failed: {e}")
-                raise
+            print(f"⚠️ PyMuPDF extraction failed: {e}")
+        
+        # Method 2: pdfplumber - Good for complex layouts
+        try:
+            text = self._extract_with_pdfplumber(file_path)
+            if self._is_text_quality_good(text):
+                print(f"✅ pdfplumber extraction successful: {len(text)} chars")
+                return text
+        except Exception as e:
+            print(f"⚠️ pdfplumber extraction failed: {e}")
+        
+        # Method 3: PyPDF2 - Fallback
+        try:
+            text = self._extract_with_pypdf2(file_path)
+            if self._is_text_quality_good(text):
+                print(f"✅ PyPDF2 extraction successful: {len(text)} chars")
+                return text
+        except Exception as e:
+            print(f"⚠️ PyPDF2 extraction failed: {e}")
+        
+        # Method 4: OCR fallback for scanned PDFs
+        try:
+            text = self._extract_with_ocr(file_path)
+            if self._is_text_quality_good(text):
+                print(f"✅ OCR extraction successful: {len(text)} chars")
+                return text
+        except Exception as e:
+            print(f"⚠️ OCR extraction failed: {e}")
+        
+        print(f"❌ All PDF extraction methods failed for {file_path}")
+        return text or "No text could be extracted from PDF"
+    
+    def _extract_with_pymupdf(self, file_path: str) -> str:
+        """Extract text using PyMuPDF (fitz) - fastest and most reliable"""
+        doc = fitz.open(file_path)
+        text = ""
+        
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            page_text = page.get_text()
+            if page_text.strip():
+                text += page_text + "\n"
+        
+        doc.close()
+        return text.strip()
+    
+    def _extract_with_pdfplumber(self, file_path: str) -> str:
+        """Extract text using pdfplumber - good for complex layouts"""
+        text = ""
+        
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text and page_text.strip():
+                    text += page_text + "\n"
         
         return text.strip()
+    
+    def _extract_with_pypdf2(self, file_path: str) -> str:
+        """Extract text using PyPDF2 - original method"""
+        text = ""
+        
+        with open(file_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            for page in pdf_reader.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+        
+        return text.strip()
+    
+    def _extract_with_ocr(self, file_path: str) -> str:
+        """Extract text using OCR for scanned PDFs"""
+        try:
+            from pdf2image import convert_from_path
+            
+            # Convert PDF to images
+            images = convert_from_path(file_path, dpi=300)
+            text = ""
+            
+            for image in images:
+                # Extract text using OCR
+                page_text = pytesseract.image_to_string(image, lang='eng')
+                if page_text.strip():
+                    text += page_text + "\n"
+            
+            return text.strip()
+        except ImportError:
+            print("pdf2image not available for OCR")
+            return ""
+    
+    def _is_text_quality_good(self, text: str) -> bool:
+        """
+        Validate if extracted text is of good quality
+        
+        Args:
+            text: Extracted text
+            
+        Returns:
+            True if text quality is good
+        """
+        if not text or len(text.strip()) < 50:
+            return False
+        
+        # Check for common PDF extraction issues
+        issues = [
+            len(re.findall(r'[^\x00-\x7F]', text)) > len(text) * 0.3,  # Too many non-ASCII chars
+            len(re.findall(r'\s{10,}', text)) > 5,  # Too many consecutive spaces
+            len(re.findall(r'[A-Z]{20,}', text)) > 3,  # Too many consecutive caps
+            text.count('\n') > len(text) * 0.1,  # Too many newlines
+        ]
+        
+        return not any(issues)
     
     def extract_text_from_txt(self, file_path: str) -> str:
         """

@@ -41,7 +41,7 @@ services:
 
   # ChromaDB Vector Database
   chromadb:
-    image: chromadb/chroma:latest
+    image: chromadb/chroma:0.5.23
     container_name: vision_chromadb
     environment:
       - IS_PERSISTENT=TRUE

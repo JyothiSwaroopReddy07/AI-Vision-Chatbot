@@ -16,33 +16,18 @@ class EmbeddingManager:
     
     def _initialize_embeddings(self):
         """Initialize the embedding model based on configuration"""
-        # Check if OpenAI is properly configured
-        use_openai = (
-            settings.LLM_PROVIDER == "openai" and 
-            settings.OPENAI_API_KEY and 
-            settings.OPENAI_API_KEY != "" and
-            not settings.OPENAI_API_KEY.startswith("your-")
+        # Always use local embeddings for indexing to avoid API costs
+        print(f"Initializing local embeddings: {settings.EMBEDDING_MODEL}")
+        self.embedding_model = HuggingFaceEmbeddings(
+            model_name=settings.EMBEDDING_MODEL,
+            model_kwargs={
+                'device': settings.EMBEDDING_DEVICE
+            },
+            encode_kwargs={
+                'batch_size': settings.EMBEDDING_BATCH_SIZE,
+                'normalize_embeddings': True
+            }
         )
-        
-        if use_openai:
-            print("Initializing OpenAI embeddings...")
-            self.embedding_model = OpenAIEmbeddings(
-                model=settings.OPENAI_EMBEDDING_MODEL,
-                openai_api_key=settings.OPENAI_API_KEY
-            )
-        else:
-            # Use local Hugging Face embeddings (default)
-            print(f"Initializing local embeddings: {settings.EMBEDDING_MODEL}")
-            self.embedding_model = HuggingFaceEmbeddings(
-                model_name=settings.EMBEDDING_MODEL,
-                model_kwargs={
-                    'device': settings.EMBEDDING_DEVICE
-                },
-                encode_kwargs={
-                    'batch_size': settings.EMBEDDING_BATCH_SIZE,
-                    'normalize_embeddings': True
-                }
-            )
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """

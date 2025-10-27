@@ -108,7 +108,7 @@ interface ChatState {
 
 export const useChatStore = create<ChatState>((set) => ({
   messages: [],
-  sessionId: null,
+  sessionId: typeof window !== 'undefined' ? localStorage.getItem('sessionId') : null,
   isLoading: false,
 
   addMessage: (message) => set((state) => ({
@@ -117,10 +117,24 @@ export const useChatStore = create<ChatState>((set) => ({
 
   setMessages: (messages) => set({ messages }),
 
-  setSessionId: (id) => set({ sessionId: id }),
+  setSessionId: (id) => {
+    if (typeof window !== 'undefined') {
+      if (id) {
+        localStorage.setItem('sessionId', id)
+      } else {
+        localStorage.removeItem('sessionId')
+      }
+    }
+    set({ sessionId: id })
+  },
 
   setLoading: (loading) => set({ isLoading: loading }),
 
-  clearMessages: () => set({ messages: [], sessionId: null }),
+  clearMessages: () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('sessionId')
+    }
+    set({ messages: [], sessionId: null })
+  },
 }))
 
