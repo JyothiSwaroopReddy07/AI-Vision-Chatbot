@@ -56,7 +56,7 @@ export default function ChatInterface() {
     setIsLoading(true)
 
     try {
-      const response = await chatAPI.sendMessage(input, sessionId)
+      const response = await chatAPI.sendMessage(input, sessionId ?? undefined)
       const data = response.data
       
       console.log('API Response:', data) // Debug log
