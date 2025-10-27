@@ -3,6 +3,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import inspect as sa_inspect
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -137,18 +138,27 @@ async def get_chat_history(
     messages = []
     for message in session.messages:
         citations = []
-        if message.citations:
-            for citation in message.citations:
-                citations.append(Citation(
-                    source_type=citation.source_type,
-                    source_id=citation.source_id,
-                    title=citation.title,
-                    authors=citation.authors,
-                    journal=citation.journal,
-                    url=citation.url,
-                    excerpt=citation.excerpt,
-                    relevance_score=citation.relevance_score
-                ))
+        
+        # Check if citations relationship is loaded to avoid lazy loading
+        inspector = sa_inspect(message)
+        if 'citations' in inspector.unloaded:
+            # Citations not loaded, skip them
+            message_citations = []
+        else:
+            # Citations are loaded, safe to access
+            message_citations = message.citations
+            
+        for citation in message_citations:
+            citations.append(Citation(
+                source_type=citation.source_type,
+                source_id=citation.source_id,
+                title=citation.title,
+                authors=citation.authors,
+                journal=citation.journal,
+                url=citation.url,
+                excerpt=citation.excerpt,
+                relevance_score=citation.relevance_score
+            ))
         
         messages.append(MessageResponse(
             id=str(message.id),
