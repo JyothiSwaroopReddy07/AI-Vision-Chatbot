@@ -73,6 +73,7 @@ pydantic-settings==2.1.0
 python-slugify==8.0.1
 pytz==2023.3
 httpx==0.25.2
+aiohttp==3.9.1
 aiofiles==23.2.1
 tenacity==8.2.3
 

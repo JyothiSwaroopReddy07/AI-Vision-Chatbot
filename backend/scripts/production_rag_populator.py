@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """
-PRODUCTION-GRADE RAG POPULATION SYSTEM
-=======================================
+CONCURRENT RAG POPULATION SYSTEM WITH FULL-TEXT PDF EXTRACTION
+================================================================
 
 This script downloads ALL available vision research articles from PubMed:
-- Searches PubMed comprehensively
-- Downloads abstracts AND PDFs
+- Uses 5 PubMed API keys concurrently (50 requests/second total)
+- Extracts full-text PDFs from PubMed Central (PMC) when available
+- Downloads abstracts for all articles
+- Parallel query processing with asyncio
 - Handles rate limiting with exponential backoff
-- Implements retry logic for failures
 - Saves progress to resume interrupted runs
-- Processes and chunks all content
-- Indexes in ChromaDB with embeddings
-- Expected: 10,000+ articles
+- Indexes full text + abstracts in ChromaDB
+
+Expected: 10,000+ articles with 2,000+ full-text PDFs in ~1 hour
 
 Author: Full-Stack AI Engineer
 """
@@ -21,157 +22,134 @@ import os
 import time
 import json
 import asyncio
-import hashlib
-import requests
+import aiohttp
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from tqdm import tqdm
+import threading
+import re
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.services.pubmed_service import PubMedService
 from app.rag.vector_store import vector_store_manager
 from app.rag.document_processor import document_processor
 from langchain.schema import Document
+from langchain_community.vectorstores.utils import filter_complex_metadata
 from Bio import Entrez
 import PyPDF2
 import io
 
 
-# Configure Entrez
-Entrez.email = settings.PUBMED_EMAIL
-if settings.PUBMED_API_KEY:
-    Entrez.api_key = settings.PUBMED_API_KEY
-
-
 # Comprehensive vision research search terms
 COMPREHENSIVE_SEARCH_TERMS = [
-    # Retinal diseases (most important)
-    "retinal degeneration",
-    "age related macular degeneration",
-    "diabetic retinopathy",
-    "retinitis pigmentosa",
-    "macular edema",
-    "retinal dystrophy",
-    "choroidal neovascularization",
-    "geographic atrophy",
+    # Retinal diseases
+    "retinal degeneration", "age related macular degeneration", "diabetic retinopathy",
+    "retinitis pigmentosa", "macular edema", "retinal dystrophy",
+    "choroidal neovascularization", "geographic atrophy", "central serous chorioretinopathy",
+    "retinal detachment", "epiretinal membrane", "macular hole",
     
+    # Inherited retinal diseases
+    "leber congenital amaurosis", "stargardt disease", "best disease",
+    "choroideremia", "x-linked retinoschisis", "cone-rod dystrophy",
+    "retinopathy of prematurity", "coats disease",
+
     # Glaucoma
-    "glaucoma",
-    "primary open angle glaucoma",
-    "normal tension glaucoma",
-    "angle closure glaucoma",
-    "optic nerve head cupping",
-    
-    # Retinal cell biology
-    "retinal ganglion cell",
-    "photoreceptor",
-    "rod photoreceptor",
-    "cone photoreceptor",
-    "retinal pigment epithelium",
-    "muller cell",
-    "amacrine cell",
-    "bipolar cell",
-    "horizontal cell",
-    
-    # Single-cell and omics
-    "single cell RNA seq retina",
-    "single cell transcriptomics eye",
-    "spatial transcriptomics retina",
-    "retinal cell atlas",
-    "retinal proteomics",
-    "retinal metabolomics",
+    "glaucoma", "primary open angle glaucoma", "angle closure glaucoma",
+    "normal tension glaucoma", "congenital glaucoma", "neovascular glaucoma",
+    "retinal ganglion cells", "optic nerve head",
     
     # Cornea
-    "corneal disease",
-    "keratoconus",
-    "corneal dystrophy",
-    "corneal endothelium",
-    "corneal epithelium",
-    "limbal stem cell",
+    "keratoconus", "corneal dystrophy", "fuchs endothelial corneal dystrophy",
+    "corneal transplant", "bacterial keratitis", "fungal keratitis",
+    "dry eye", "keratoconjunctivitis sicca", "meibomian gland dysfunction",
     
-    # Optic nerve
-    "optic neuropathy",
-    "optic nerve regeneration",
-    "optic neuritis",
-    "anterior ischemic optic neuropathy",
+    # Cataract
+    "cataract", "phacoemulsification", "intraocular lens",
+    "posterior capsule opacification",
     
-    # Visual system
-    "visual cortex plasticity",
-    "visual pathway",
-    "lateral geniculate nucleus",
+    # Neuro-ophthalmology  
+    "optic neuritis", "ischemic optic neuropathy", "papilledema",
+    "leber hereditary optic neuropathy", "idiopathic intracranial hypertension",
     
-    # AI and computational
-    "deep learning ophthalmology",
-    "machine learning retinal imaging",
-    "artificial intelligence diabetic retinopathy",
-    "automated fundus analysis",
-    "OCT segmentation deep learning",
+    # Imaging
+    "optical coherence tomography", "oct angiography", "fundus autofluorescence",
+    "fluorescein angiography", "adaptive optics",
     
-    # Gene therapy
-    "gene therapy inherited retinal disease",
-    "AAV retina",
-    "CRISPR eye disease",
-    "gene editing retina",
-    "optogenetics vision restoration",
-    
-    # Stem cells and regeneration
-    "retinal organoid",
-    "iPSC retina",
-    "retinal progenitor cell",
-    "photoreceptor transplantation",
-    "retinal regeneration",
-    
-    # Imaging modalities
-    "optical coherence tomography",
-    "OCT angiography",
-    "fundus autofluorescence",
-    "adaptive optics retinal imaging",
-    "scanning laser ophthalmoscopy",
-    
-    # Drug delivery
-    "intravitreal injection",
-    "sustained release eye",
-    "ocular drug delivery",
-    "nanoparticle retina",
-    
-    # Inflammation and immunity
-    "uveitis",
-    "retinal inflammation",
-    "microglia retina",
-    "immune privilege eye",
-    
+    # Uveitis
+    "uveitis", "retinal inflammation", "anterior uveitis", "posterior uveitis",
+    "behcet uveitis", "sarcoid uveitis",
+
     # Vascular
-    "retinal vascular disease",
-    "branch retinal vein occlusion",
-    "central retinal artery occlusion",
-    "retinal angiogenesis",
+    "retinal vascular disease", "retinal artery occlusion", "retinal vein occlusion",
+    
+    # Oncology
+    "uveal melanoma", "choroidal melanoma", "retinoblastoma",
+    "ocular lymphoma", "choroidal nevus",
+    
+    # Therapy
+    "anti-vegf therapy", "ranibizumab", "aflibercept", "bevacizumab", "faricimab",
+    "photodynamic therapy", "pars plana vitrectomy",
+    "complement inhibition amd", "retinal prosthesis",
+    
+    # Public health
+    "low vision rehabilitation", "vision screening", "blindness epidemiology",
+    "visual impairment prevalence", "amblyopia", "strabismus",
 ]
 
 
-class ProductionRAGPopulator:
-    """Production-grade RAG population system"""
+class RateLimiter:
+    """Rate limiter for API requests - 10 req/sec per API key"""
+    
+    def __init__(self, requests_per_second: int = 10):
+        self.delay = 1.0 / requests_per_second
+        self.last_request = 0
+        self.lock = asyncio.Lock()
+    
+    async def acquire(self):
+        """Wait if needed to respect rate limit"""
+        async with self.lock:
+            now = time.time()
+            time_since_last = now - self.last_request
+            if time_since_last < self.delay:
+                await asyncio.sleep(self.delay - time_since_last)
+            self.last_request = time.time()
+
+
+class ConcurrentRAGPopulator:
+    """Concurrent RAG population with full-text PDF extraction"""
     
     def __init__(
         self,
+        api_keys: List[str],
+        emails: List[str],
         progress_file: str = "/data/rag_progress.json",
         pdf_dir: str = "/data/pubmed_pdfs",
         max_articles_per_query: int = 500,
-        rate_limit_delay: float = 0.34,  # ~3 requests/sec
-        collection_name: str = "pubmed_vision_research"
+        collection_name: str = "pubmed_vision_research",
+        max_concurrent_queries: int = 5
     ):
+        self.api_keys = api_keys
+        self.emails = emails
+        self.num_workers = len(api_keys)
         self.progress_file = progress_file
         self.pdf_dir = Path(pdf_dir)
         self.pdf_dir.mkdir(parents=True, exist_ok=True)
         self.max_articles_per_query = max_articles_per_query
-        self.rate_limit_delay = rate_limit_delay
         self.collection_name = collection_name
+        self.max_concurrent_queries = max_concurrent_queries
+        
+        # Rate limiters (10 req/sec each)
+        self.rate_limiters = [RateLimiter(10) for _ in api_keys]
+        
+        # Configure Entrez with first key/email
+        Entrez.email = emails[0] if emails else settings.PUBMED_EMAIL
+        Entrez.api_key = api_keys[0] if api_keys else None
         
         self.progress = self._load_progress()
-        self.pubmed_service = PubMedService()
+        self.progress_lock = threading.Lock()
         
         self.stats = {
             "total_queries": 0,
@@ -196,7 +174,8 @@ class ProductionRAGPopulator:
     
     def _save_progress(self):
         """Save progress to file"""
-        os.makedirs(os.path.dirname(self.progress_file), exist_ok=True)
+        with self.progress_lock:
+            os.makedirs(os.path.dirname(self.progress_file), exist_ok=True)
         with open(self.progress_file, 'w') as f:
             json.dump(self.progress, f, indent=2)
     
@@ -204,14 +183,18 @@ class ProductionRAGPopulator:
         self,
         query: str,
         max_results: int,
+        api_key: str,
+        email: str,
+        rate_limiter: RateLimiter,
         retries: int = 5
     ) -> List[str]:
-        """
-        Search PubMed with retry logic and exponential backoff
-        """
+        """Search PubMed with retry logic"""
         for attempt in range(retries):
             try:
-                # Simple query format that PubMed accepts
+                await rate_limiter.acquire()
+                Entrez.api_key = api_key
+                Entrez.email = email
+                
                 handle = Entrez.esearch(
                     db="pubmed",
                     term=query,
@@ -221,32 +204,34 @@ class ProductionRAGPopulator:
                 record = Entrez.read(handle)
                 handle.close()
                 
-                pmids = record["IdList"]
-                return pmids
+                return record.get("IdList", [])
             
             except Exception as e:
-                wait_time = (2 ** attempt) * self.rate_limit_delay
-                print(f"  ⚠️  Attempt {attempt+1}/{retries} failed: {e}")
-                
                 if attempt < retries - 1:
-                    print(f"  ⏳ Waiting {wait_time:.1f}s before retry...")
-                    await asyncio.sleep(wait_time)
+                    await asyncio.sleep((2 ** attempt) * 0.5)
                 else:
-                    print(f"  ❌ All attempts failed for query: {query}")
+                    print(f"    ⚠️  Failed to search: {e}")
                     return []
-        
         return []
     
-    async def fetch_article_with_pdf(
+    async def fetch_article_metadata(
         self,
         pmid: str,
-        db: Any
+        api_key: str,
+        email: str,
+        rate_limiter: RateLimiter
     ) -> Optional[Dict]:
         """
-        Fetch article details and try to download PDF
+        Fetch article metadata including PMC ID for PDF access
+        
+        Returns dict with: pmid, pmc_id, title, abstract, authors, journal, doi, pub_date
         """
         try:
-            # Fetch article metadata
+            await rate_limiter.acquire()
+            Entrez.api_key = api_key
+            Entrez.email = email
+            
+            # Fetch detailed article data
             handle = Entrez.efetch(
                 db="pubmed",
                 id=pmid,
@@ -256,193 +241,250 @@ class ProductionRAGPopulator:
             records = Entrez.read(handle)
             handle.close()
             
-            if not records.get("PubmedArticle"):
+            if not records or "PubmedArticle" not in records:
                 return None
             
             record = records["PubmedArticle"][0]
-            article_data = self.pubmed_service._parse_article(record)
+            medline = record["MedlineCitation"]
+            article_data = medline["Article"]
             
-            if not article_data:
-                return None
+            # Extract PMC ID from ArticleIdList
+            pmc_id = None
+            if "PubmedData" in record and "ArticleIdList" in record["PubmedData"]:
+                for article_id in record["PubmedData"]["ArticleIdList"]:
+                    if article_id.attributes.get("IdType") == "pmc":
+                        pmc_id = str(article_id).replace("PMC", "")  # Get number only
+                        break
             
-            # Try to download PDF
-            pdf_path = None
-            pdf_text = None
+            # Extract DOI
+            doi = None
+            if "ELocationID" in article_data:
+                for eloc in article_data["ELocationID"]:
+                    if eloc.attributes.get("EIdType") == "doi":
+                        doi = str(eloc)
+                        break
             
-            # Method 1: Try PMC (PubMed Central)
-            try:
-                pmc_id = self._get_pmc_id(pmid)
-                if pmc_id:
-                    pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/"
-                    pdf_path = self.pdf_dir / f"{pmid}.pdf"
-                    
-                    if self._download_pdf(pdf_url, pdf_path):
-                        pdf_text = self._extract_text_from_pdf(pdf_path)
-                        self.stats["pdfs_downloaded"] += 1
-            except:
-                pass
+            # Extract title
+            title = str(article_data.get("ArticleTitle", ""))
             
-            # Method 2: Try DOI-based download
-            if not pdf_text and article_data.doi:
-                try:
-                    pdf_url = f"https://doi.org/{article_data.doi}"
-                    pdf_path = self.pdf_dir / f"{pmid}.pdf"
-                    
-                    if self._download_pdf(pdf_url, pdf_path):
-                        pdf_text = self._extract_text_from_pdf(pdf_path)
-                        self.stats["pdfs_downloaded"] += 1
-                except:
-                    pass
+            # Extract abstract
+            abstract = ""
+            if "Abstract" in article_data:
+                abstract_texts = article_data["Abstract"].get("AbstractText", [])
+                if isinstance(abstract_texts, list):
+                    abstract = " ".join([str(text) for text in abstract_texts])
+                else:
+                    abstract = str(abstract_texts)
+            
+            # Extract authors
+            authors = []
+            if "AuthorList" in article_data:
+                for author in article_data["AuthorList"]:
+                    if "LastName" in author and "ForeName" in author:
+                        authors.append(f"{author['ForeName']} {author['LastName']}")
+            authors_str = ", ".join(authors)
+            
+            # Extract journal
+            journal = article_data.get("Journal", {}).get("Title", "")
+            
+            # Extract publication date
+            pub_date = None
+            if "Journal" in article_data:
+                journal_issue = article_data["Journal"].get("JournalIssue", {})
+                pub_date_data = journal_issue.get("PubDate", {})
+                year = pub_date_data.get("Year")
+                if year:
+                    pub_date = str(year)
             
             return {
-                "article": article_data,
-                "pdf_text": pdf_text,
-                "pdf_path": str(pdf_path) if pdf_path else None
+                "pmid": pmid,
+                "pmc_id": pmc_id,
+                "title": title,
+                "abstract": abstract,
+                "authors": authors_str,
+                "journal": journal,
+                "doi": doi,
+                "publication_date": pub_date
             }
         
         except Exception as e:
-            print(f"  ❌ Error fetching PMID {pmid}: {e}")
+            print(f"Error fetching metadata for PMID {pmid}: {e}")
             return None
     
-    def _get_pmc_id(self, pmid: str) -> Optional[str]:
-        """Get PMC ID from PMID"""
-        try:
-            handle = Entrez.elink(
-                dbfrom="pubmed",
-                db="pmc",
-                id=pmid
-            )
-            record = Entrez.read(handle)
-            handle.close()
-            
-            if record[0]["LinkSetDb"]:
-                pmc_id = record[0]["LinkSetDb"][0]["Link"][0]["Id"]
-                return f"PMC{pmc_id}"
-        except:
-            pass
+    async def download_pmc_pdf(
+        self,
+        pmc_id: str,
+        pmid: str
+    ) -> Optional[str]:
+        """
+        Download and extract text from PMC PDF
         
-        return None
-    
-    def _download_pdf(self, url: str, save_path: Path) -> bool:
-        """Download PDF from URL"""
-        try:
-            response = requests.get(
-                url,
-                headers={"User-Agent": "Mozilla/5.0"},
-                timeout=30,
-                allow_redirects=True
-            )
+        Args:
+            pmc_id: PMC ID (number only, e.g., "5967598")
+            pmid: PubMed ID for filename
             
-            if response.status_code == 200 and response.headers.get('content-type', '').startswith('application/pdf'):
-                with open(save_path, 'wb') as f:
-                    f.write(response.content)
-                return True
-        except:
-            pass
-        
-        return False
-    
-    def _extract_text_from_pdf(self, pdf_path: Path) -> Optional[str]:
-        """Extract text from PDF"""
+        Returns:
+            Extracted text or None
+        """
         try:
-            with open(pdf_path, 'rb') as f:
-                pdf_reader = PyPDF2.PdfReader(f)
-                text = ""
-                for page in pdf_reader.pages:
-                    text += page.extract_text() + "\n"
-                return text
-        except:
+            # Construct PMC PDF URL
+            pdf_url = f"https://pmc.ncbi.nlm.nih.gov/articles/PMC{pmc_id}/pdf/"
+            pdf_path = self.pdf_dir / f"{pmid}_PMC{pmc_id}.pdf"
+            
+            # Download PDF with timeout
+            timeout = aiohttp.ClientTimeout(total=60)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(pdf_url) as response:
+                    if response.status == 200:
+                        pdf_content = await response.read()
+                        
+                        # Save PDF
+                        pdf_path.write_bytes(pdf_content)
+                        
+                        # Extract text
+                        try:
+                            pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_content))
+                            text = ""
+                            for page in pdf_reader.pages:
+                                page_text = page.extract_text()
+                                if page_text:
+                                    text += page_text + "\n"
+                                        
+                                if text.strip():
+                                            # Log extraction statistics
+                                    page_count = len(pdf_reader.pages)
+                                    char_count = len(text)
+                                    print(f"  📄 Extracted {page_count} pages, {char_count:,} characters from PMC{pmc_id}")
+                            return text
+                        except Exception as e:
+                            print(f"  ⚠️  PDF extraction error for PMC{pmc_id}: {e}")
+                            return None
+                    else:
+                        return None
+        
+        except asyncio.TimeoutError:
+            print(f"  ⚠️  Timeout downloading PMC{pmc_id}")
+            return None
+        except Exception as e:
+            print(f"  ⚠️  Error downloading PMC{pmc_id}: {e}")
             return None
     
-    async def process_query(
+    async def process_query_concurrent(
         self,
         query: str,
         query_idx: int,
         total_queries: int,
+        api_key_idx: int,
         db: Any
     ):
-        """Process a single search query"""
+        """Process a single search query with assigned API key"""
+        
+        api_key = self.api_keys[api_key_idx]
+        email = self.emails[api_key_idx]
+        rate_limiter = self.rate_limiters[api_key_idx]
         
         # Check if already completed
         if query in self.progress["completed_queries"]:
-            print(f"[{query_idx}/{total_queries}] ✓ Already completed: {query}")
+            print(f"[Worker {api_key_idx+1}] [Q{query_idx}/{total_queries}] ✓ Already completed: {query}")
             return
         
-        print(f"\n[{query_idx}/{total_queries}] 🔍 {query}")
+        print(f"\n[Worker {api_key_idx+1}] [Q{query_idx}/{total_queries}] 🔍 {query}")
         print("=" * 70)
         
         # Search PubMed
         print(f"  📡 Searching PubMed...")
-        pmids = await self.search_pubmed_robust(query, self.max_articles_per_query)
+        pmids = await self.search_pubmed_robust(query, self.max_articles_per_query, api_key, email, rate_limiter)
         
         if not pmids:
             print(f"  ⚠️  No results found")
-            self.progress["completed_queries"].append(query)
+            with self.progress_lock:
+                self.progress["completed_queries"].append(query)
             self._save_progress()
             return
         
         print(f"  ✓ Found {len(pmids)} articles")
         
         # Filter already downloaded
-        new_pmids = [p for p in pmids if p not in self.progress["downloaded_pmids"]]
+        with self.progress_lock:
+            new_pmids = [p for p in pmids if p not in self.progress["downloaded_pmids"]]
+        
         print(f"  ℹ️  {len(new_pmids)} new articles to download")
         
-        # Download articles with progress bar
+        # Download articles with metadata and PDFs
         documents = []
-        with tqdm(total=len(new_pmids), desc="  Downloading", unit="article") as pbar:
-            for pmid in new_pmids:
-                # Rate limiting
-                await asyncio.sleep(self.rate_limit_delay)
+        
+        print(f"  ⬇️  Downloading with Worker {api_key_idx+1}...")
+        
+        for i, pmid in enumerate(new_pmids):
+            try:
+                # Fetch metadata
+                metadata = await self.fetch_article_metadata(pmid, api_key, email, rate_limiter)
                 
-                result = await self.fetch_article_with_pdf(pmid, db)
+                if not metadata:
+                    with self.progress_lock:
+                        self.progress["failed_pmids"].append(pmid)
+                    self.stats["errors"] += 1
+                    continue
                 
-                if result:
-                    article = result["article"]
-                    pdf_text = result["pdf_text"]
-                    
-                    # Create document from abstract
-                    content = f"Title: {article.title}\n\n"
-                    content += f"Authors: {article.authors}\n"
-                    content += f"Journal: {article.journal}\n"
-                    if article.publication_date:
-                        content += f"Published: {article.publication_date}\n"
-                    content += f"PMID: {article.pmid}\n"
-                    if article.doi:
-                        content += f"DOI: {article.doi}\n"
-                    content += f"\nAbstract:\n{article.abstract}\n"
-                    
-                    # Add full text if PDF was downloaded
+                # Try to download PDF if PMC ID exists
+                pdf_text = None
+                if metadata.get("pmc_id"):
+                    pdf_text = await self.download_pmc_pdf(metadata["pmc_id"], pmid)
                     if pdf_text:
-                        content += f"\n\nFull Text:\n{pdf_text[:50000]}"  # Limit to 50k chars
-                    
-                    doc = Document(
-                        page_content=content,
-                        metadata={
+                        self.stats["pdfs_downloaded"] += 1
+                
+                # Create document content
+                content = f"Title: {metadata['title']}\n\n"
+                content += f"Authors: {metadata['authors']}\n"
+                content += f"Journal: {metadata['journal']}\n"
+                if metadata['publication_date']:
+                    content += f"Published: {metadata['publication_date']}\n"
+                content += f"PMID: {pmid}\n"
+                if metadata['doi']:
+                    content += f"DOI: {metadata['doi']}\n"
+                if metadata.get('pmc_id'):
+                    content += f"PMC ID: PMC{metadata['pmc_id']}\n"
+                content += f"\nAbstract:\n{metadata['abstract']}\n"
+                
+                # Add full text if PDF was extracted
+                if pdf_text:
+                    content += f"\n\n{'='*70}\nFULL TEXT (EXTRACTED FROM PDF)\n{'='*70}\n\n{pdf_text}"
+                
+                # Build metadata without None values
+                doc_metadata = {
                             "source": "pubmed",
-                            "pmid": article.pmid,
-                            "title": article.title,
-                            "authors": article.authors,
-                            "journal": article.journal,
-                            "publication_date": str(article.publication_date) if article.publication_date else None,
-                            "doi": article.doi,
-                            "url": article.pdf_url,
+                    "pmid": pmid,
+                    "title": metadata['title'] or "",
+                    "authors": metadata['authors'] or "",
+                    "journal": metadata['journal'] or "",
                             "query": query,
-                            "has_full_text": pdf_text is not None
-                        }
-                    )
-                    documents.append(doc)
+                    "has_full_text": bool(pdf_text)
+                }
+                
+                if metadata.get('pmc_id'):
+                    doc_metadata["pmc_id"] = f"PMC{metadata['pmc_id']}"
+                if metadata['publication_date']:
+                    doc_metadata["publication_date"] = metadata['publication_date']
+                if metadata['doi']:
+                    doc_metadata["doi"] = metadata['doi']
+                
+                doc = Document(page_content=content, metadata=doc_metadata)
+                documents.append(doc)
                     
+                with self.progress_lock:
                     self.progress["downloaded_pmids"].append(pmid)
                     self.stats["articles_downloaded"] += 1
-                else:
-                    self.progress["failed_pmids"].append(pmid)
-                    self.stats["errors"] += 1
                 
-                pbar.update(1)
-                
-                # Save progress every 50 articles
-                if len(documents) % 50 == 0:
+                # Save progress periodically
+                if (i + 1) % 50 == 0:
                     self._save_progress()
+                    print(f"  Progress: {i+1}/{len(new_pmids)} articles processed")
+            
+            except Exception as e:
+                print(f"  ⚠️  Error processing PMID {pmid}: {e}")
+                with self.progress_lock:
+                    self.progress["failed_pmids"].append(pmid)
+                self.stats["errors"] += 1
         
         print(f"  ✓ Downloaded {len(documents)} articles ({self.stats['pdfs_downloaded']} with PDFs)")
         
@@ -450,7 +492,7 @@ class ProductionRAGPopulator:
         if documents:
             print(f"  📝 Chunking documents...")
             all_chunks = []
-            for doc in tqdm(documents, desc="  Chunking", unit="doc"):
+            for doc in documents:
                 chunks = document_processor.text_splitter.create_documents(
                     texts=[doc.page_content],
                     metadatas=[doc.metadata]
@@ -461,57 +503,64 @@ class ProductionRAGPopulator:
             
             print(f"  💾 Indexing in ChromaDB...")
             batch_size = 100
-            for i in tqdm(range(0, len(all_chunks), batch_size), desc="  Indexing", unit="batch"):
+            for i in range(0, len(all_chunks), batch_size):
                 batch = all_chunks[i:i + batch_size]
+                filtered_batch = filter_complex_metadata(batch)
                 
                 try:
                     vector_store_manager.add_documents(
                         collection_name=self.collection_name,
-                        documents=batch
+                        documents=filtered_batch
                     )
                     
-                    # Mark PMIDs as indexed
                     for doc in batch:
                         pmid = doc.metadata.get("pmid")
-                        if pmid and pmid not in self.progress["indexed_pmids"]:
-                            self.progress["indexed_pmids"].append(pmid)
+                        if pmid:
+                            with self.progress_lock:
+                                if pmid not in self.progress["indexed_pmids"]:
+                                    self.progress["indexed_pmids"].append(pmid)
                     
                     self.stats["chunks_indexed"] += len(batch)
-                
                 except Exception as e:
                     print(f"    ⚠️  Error indexing batch: {e}")
             
             print(f"  ✅ Indexed {len(all_chunks)} chunks")
         
         # Mark query as completed
-        self.progress["completed_queries"].append(query)
-        self.stats["total_queries"] += 1
-        self._save_progress()
+        with self.progress_lock:
+            self.progress["completed_queries"].append(query)
+            self.stats["total_queries"] += 1
+            self._save_progress()
         
-        # Print current stats
-        print(f"\n  📊 Progress: {len(self.progress['completed_queries'])}/{len(COMPREHENSIVE_SEARCH_TERMS)} queries | " +
-              f"{self.stats['articles_downloaded']} articles | " +
-              f"{self.stats['pdfs_downloaded']} PDFs | " +
-              f"{self.stats['chunks_indexed']} chunks")
+        # Print stats
+        with self.progress_lock:
+            completed = len(self.progress['completed_queries'])
+            downloaded = len(self.progress['downloaded_pmids'])
+            indexed = len(self.progress['indexed_pmids'])
+        
+        print(f"\n  📊 Progress: {completed}/{len(COMPREHENSIVE_SEARCH_TERMS)} queries | " +
+              f"{downloaded} articles | {self.stats['pdfs_downloaded']} PDFs | {indexed} indexed")
     
-    async def populate_all(self):
-        """Main function to populate ALL articles"""
+    async def populate_all_concurrent(self):
+        """Main function to populate ALL articles with concurrent workers"""
         
-        print("""
+        print(f"""
 ╔═══════════════════════════════════════════════════════════════════╗
 ║                                                                   ║
-║         PRODUCTION RAG POPULATION SYSTEM                          ║
+║    CONCURRENT RAG POPULATION WITH FULL-TEXT PDF EXTRACTION        ║
 ║         Comprehensive Vision Research Knowledge Base              ║
 ║                                                                   ║
 ║  Features:                                                        ║
+║  ✓ {len(self.api_keys)} PubMed API keys working in parallel                       ║
+║  ✓ {len(self.api_keys) * 10} requests/second total capacity                          ║
+║  ✓ Full-text PDF extraction from PMC (open access)                ║
 ║  ✓ Downloads ALL available PubMed articles                        ║
-║  ✓ Extracts PDFs when available                                   ║
 ║  ✓ Handles rate limiting automatically                            ║
 ║  ✓ Resumes from interruptions                                     ║
 ║  ✓ Saves progress continuously                                    ║
 ║                                                                   ║
-║  Expected: 10,000+ articles with 2,000+ PDFs                      ║
-║  Time: 3-6 hours                                                  ║
+║  Expected: 10,000+ articles with 2,000+ full-text PDFs            ║
+║  Time: ~1 hour (5x faster with {len(self.api_keys)} workers!)                       ║
 ║                                                                   ║
 ╚═══════════════════════════════════════════════════════════════════╝
         """)
@@ -519,53 +568,109 @@ class ProductionRAGPopulator:
         print(f"📍 Progress file: {self.progress_file}")
         print(f"📁 PDF directory: {self.pdf_dir}")
         print(f"🗄️  Collection: {self.collection_name}")
-        print(f"⚡ Rate limit: {self.rate_limit_delay}s between requests")
+        print(f"⚡ Rate limit: 10 req/sec per worker ({len(self.api_keys) * 10} req/sec total)")
+        print(f"👷 Workers: {len(self.api_keys)}")
         print(f"📚 Total queries: {len(COMPREHENSIVE_SEARCH_TERMS)}")
-        print(f"✓ Already completed: {len(self.progress['completed_queries'])} queries")
-        print(f"✓ Already downloaded: {len(self.progress['downloaded_pmids'])} articles")
-        print(f"✓ Already indexed: {len(self.progress['indexed_pmids'])} PMIDs")
+        
+        with self.progress_lock:
+            completed = len(self.progress["completed_queries"])
+            downloaded = len(self.progress["downloaded_pmids"])
+            indexed = len(self.progress["indexed_pmids"])
+        
+        print(f"✓ Already completed: {completed} queries")
+        print(f"✓ Already downloaded: {downloaded} articles")
+        print(f"✓ Already indexed: {indexed} PMIDs")
         print()
         
-        async for db in get_db():
-            try:
-                total_queries = len(COMPREHENSIVE_SEARCH_TERMS)
-                
-                for idx, query in enumerate(COMPREHENSIVE_SEARCH_TERMS, 1):
-                    try:
-                        await self.process_query(query, idx, total_queries, db)
-                    except Exception as e:
-                        print(f"  ❌ Error processing query '{query}': {e}")
-                        continue
-                
-                # Final summary
-                print(f"\n{'='*70}")
-                print(f"🎉 POPULATION COMPLETE!")
-                print(f"{'='*70}")
-                print(f"Total queries processed: {self.stats['total_queries']}")
-                print(f"Articles downloaded: {self.stats['articles_downloaded']}")
-                print(f"PDFs downloaded: {self.stats['pdfs_downloaded']}")
-                print(f"Chunks indexed: {self.stats['chunks_indexed']}")
-                print(f"Errors: {self.stats['errors']}")
-                print(f"Duration: {datetime.now().isoformat()}")
-                print(f"\n✅ Your RAG system is now populated with REAL research data!")
-                print(f"{'='*70}\n")
-                
-            except Exception as e:
-                print(f"\n❌ Fatal error: {e}")
-                import traceback
-                traceback.print_exc()
-            finally:
-                break
+        # Get remaining queries
+        remaining_queries = [
+            (idx + 1, q) for idx, q in enumerate(COMPREHENSIVE_SEARCH_TERMS)
+            if q not in self.progress["completed_queries"]
+        ]
+        
+        if not remaining_queries:
+            print("✅ All queries already completed!")
+            return
+        
+        print(f"🚀 Processing {len(remaining_queries)} remaining queries with {len(self.api_keys)} workers...\n")
+        
+        # Create tasks with round-robin distribution
+        tasks = []
+        async with get_db() as db:
+            for i, (query_idx, query) in enumerate(remaining_queries):
+                api_key_idx = i % len(self.api_keys)
+                task = self.process_query_concurrent(query, query_idx, len(COMPREHENSIVE_SEARCH_TERMS), api_key_idx, db)
+                tasks.append(task)
+            
+            # Run with limited concurrency
+            semaphore = asyncio.Semaphore(self.max_concurrent_queries)
+            
+            async def bounded_task(task):
+                async with semaphore:
+                    return await task
+            
+            bounded_tasks = [bounded_task(task) for task in tasks]
+            await asyncio.gather(*bounded_tasks, return_exceptions=True)
+        
+        print("\n" + "="*70)
+        print("🎉 POPULATION COMPLETE!")
+        print("="*70)
+        print(f"✅ Total queries processed: {self.stats['total_queries']}")
+        print(f"✅ Total articles downloaded: {self.stats['articles_downloaded']}")
+        print(f"✅ Total PDFs extracted: {self.stats['pdfs_downloaded']}")
+        print(f"✅ Total chunks indexed: {self.stats['chunks_indexed']}")
+        print(f"⚠️  Total errors: {self.stats['errors']}")
+        
+        duration = (datetime.now() - datetime.fromisoformat(self.stats["start_time"])).total_seconds()
+        print(f"⏱️  Time taken: {duration/3600:.2f} hours")
+        print()
+
+
+async def main():
+    """Main entry point"""
+    
+    # Load API keys and emails from environment
+    API_KEYS = [
+        os.getenv("PUBMED_API_KEY_1", ""),
+        os.getenv("PUBMED_API_KEY_2", ""),
+        os.getenv("PUBMED_API_KEY_3", ""),
+        os.getenv("PUBMED_API_KEY_4", ""),
+        os.getenv("PUBMED_API_KEY_5", "")
+    ]
+    
+    EMAILS = [
+        os.getenv("PUBMED_EMAIL_1", ""),
+        os.getenv("PUBMED_EMAIL_2", ""),
+        os.getenv("PUBMED_EMAIL_3", ""),
+        os.getenv("PUBMED_EMAIL_4", ""),
+        os.getenv("PUBMED_EMAIL_5", "")
+    ]
+    
+    # Filter out empty keys and corresponding emails
+    key_email_pairs = [(k, e) for k, e in zip(API_KEYS, EMAILS) if k and e]
+    
+    if not key_email_pairs:
+        print("⚠️  No API keys/emails found! Set PUBMED_API_KEY_1-5 and PUBMED_EMAIL_1-5")
+        if settings.PUBMED_API_KEY and settings.PUBMED_EMAIL:
+            API_KEYS = [settings.PUBMED_API_KEY]
+            EMAILS = [settings.PUBMED_EMAIL]
+        else:
+            print("❌ No API keys/emails available. Exiting.")
+            return
+    else:
+        API_KEYS = [pair[0] for pair in key_email_pairs]
+        EMAILS = [pair[1] for pair in key_email_pairs]
+    
+    print(f"✓ Loaded {len(API_KEYS)} API key(s) with corresponding emails")
+    
+    populator = ConcurrentRAGPopulator(
+        api_keys=API_KEYS,
+        emails=EMAILS,
+        max_concurrent_queries=len(API_KEYS)
+    )
+    
+    await populator.populate_all_concurrent()
 
 
 if __name__ == "__main__":
-    populator = ProductionRAGPopulator(
-        progress_file="/data/rag_progress.json",
-        pdf_dir="/data/pubmed_pdfs",
-        max_articles_per_query=500,  # 500 per query
-        rate_limit_delay=0.34,  # ~3 requests/sec
-        collection_name="pubmed_vision_research"
-    )
-    
-    asyncio.run(populator.populate_all())
-
+    asyncio.run(main())
