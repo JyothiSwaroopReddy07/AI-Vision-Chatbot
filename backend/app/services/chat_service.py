@@ -433,6 +433,14 @@ class ChatService:
                 answer, citations, source_docs = await self._generate_rag_response(
                     message, chat_history, collection_names or ["pubmed_vision_research"]
                 )
+                
+                # Check if the response is out of scope
+                if "OUT_OF_SCOPE" in answer.strip():
+                    # Replace with user-friendly static message
+                    answer = "I apologize, but this question is outside my scope of expertise. I am a specialized AI assistant trained exclusively on PubMed literature related to eye and vision research. I can only answer questions about:\n\n• Eye biology, anatomy, and physiology\n• Vision research and visual neuroscience\n• Ophthalmology and eye diseases\n• Retinal disorders (AMD, diabetic retinopathy, etc.)\n• Glaucoma and optic nerve conditions\n• Corneal diseases and treatments\n• Gene therapy and treatments for eye conditions\n• Visual processing and perception\n\nPlease feel free to ask me any questions related to eye and vision research!"
+                    # Clear citations for out-of-scope questions
+                    citations = []
+                    source_docs = []
             
             # Add assistant message
             assistant_message = await self.add_message(
@@ -448,7 +456,7 @@ class ChatService:
                 }
             )
             
-            # Add citations if any
+            # Add citations only if any exist (will be empty for out-of-scope questions)
             if citations:
                 await self.add_citations(db, str(assistant_message.id), citations)
             
