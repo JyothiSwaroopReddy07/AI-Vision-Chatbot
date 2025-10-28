@@ -180,7 +180,7 @@ class ChatService:
             session_id=session_id,
             role=role,
             content=content,
-            metadata=metadata or {}
+            message_metadata=metadata or {}
         )
         
         db.add(message)
@@ -404,7 +404,8 @@ class ChatService:
         session_id: Optional[str],
         message: str,
         collection_names: Optional[List[str]] = None,
-        retrieval_k: Optional[int] = None
+        retrieval_k: Optional[int] = None,
+        search_type: str = "pubmed"
     ) -> Dict[str, Any]:
         """
         Process a chat query with RAG
@@ -434,6 +435,26 @@ class ChatService:
             
             # Use the corrected message for processing
             message = corrected_message
+            # ============================================
+            
+            # ============================================
+            # MSIGDB SEARCH - If search_type is msigdb
+            # ============================================
+            msigdb_results_data = None
+            if search_type == "msigdb":
+                from app.services.msigdb_service import msigdb_service
+                
+                # Perform MSigDB search
+                msigdb_search_result = await msigdb_service.search_gene_sets(
+                    db=db,
+                    user=user,
+                    query=message,
+                    species="auto",
+                    search_type="both",  # Use both exact and fuzzy matching
+                    collections=None  # Search all collections
+                )
+                
+                msigdb_results_data = msigdb_search_result
             # ============================================
             
             # Get existing session or prepare to create new one
@@ -477,24 +498,52 @@ class ChatService:
                 content=message
             )
             
-            # Check if it's a simple greeting or casual message
-            message_lower = message.lower().strip()
-            is_greeting = any(word in message_lower for word in [
-                "hi", "hello", "hey", "greetings", "good morning", "good afternoon", 
-                "good evening", "howdy", "sup", "what's up", "whats up"
-            ])
-            is_simple_message = len(message.split()) <= 3 and not any(char in message for char in ["?", "what", "how", "why", "when", "where"])
-            
-            # Handle greetings without RAG
-            if is_greeting and is_simple_message:
-                answer = "Hello! I'm your vision research assistant, trained on PubMed scientific literature. I can help you with questions about:\n\n• Eye biology and anatomy\n• Vision disorders and diseases\n• Ophthalmology research\n• Retinal diseases (AMD, diabetic retinopathy, etc.)\n• Glaucoma and optic nerve disorders\n• Gene therapy and CRISPR for eye diseases\n• Single-cell research in vision\n\nWhat would you like to know about vision research?"
+            # Check if it's MSigDB search or PubMed search
+            if search_type == "msigdb" and msigdb_results_data:
+                # Generate response based on MSigDB results
+                num_results = msigdb_results_data.get("num_results", 0)
+                genes = msigdb_results_data.get("genes", [])
+                
+                if num_results == 0:
+                    answer = f"I searched MSigDB for the genes: {', '.join(genes)}.\n\nUnfortunately, I didn't find any matching gene sets. This could mean:\n\n• The gene symbols might be misspelled\n• The genes might not be present in the MSigDB database\n• Try using different gene symbols or check the species (human vs mouse)\n\nPlease verify your gene symbols and try again."
+                else:
+                    top_results = msigdb_results_data.get("results", [])[:5]
+                    answer = f"I found **{num_results} gene sets** in MSigDB matching your query: **{', '.join(genes)}**\n\n"
+                    answer += "**Top 5 Results:**\n\n"
+                    
+                    for i, result in enumerate(top_results, 1):
+                        answer += f"**{i}. {result['gene_set_name']}**\n"
+                        answer += f"   - Collection: {result['collection']}\n"
+                        answer += f"   - Overlap: {result['overlap_count']}/{result['gene_set_size']} genes ({result['overlap_percentage']:.1f}%)\n"
+                        answer += f"   - P-value: {result['p_value']:.2e}\n"
+                        answer += f"   - Matched genes: {', '.join(result['matched_genes'][:5])}"
+                        if len(result['matched_genes']) > 5:
+                            answer += f" (+{len(result['matched_genes']) - 5} more)"
+                        answer += "\n\n"
+                    
+                    answer += f"\nView full results in the MSigDB panel on the right to explore all {num_results} gene sets, export data, and see detailed statistics."
+                
                 citations = []
                 source_docs = []
             else:
-                # Generate RAG response with chat history for context
-                answer, citations, source_docs = await self._generate_rag_response(
-                    message, chat_history, collection_names or ["pubmed_vision_research"]
-                )
+                # Check if it's a simple greeting or casual message
+                message_lower = message.lower().strip()
+                is_greeting = any(word in message_lower for word in [
+                    "hi", "hello", "hey", "greetings", "good morning", "good afternoon", 
+                    "good evening", "howdy", "sup", "what's up", "whats up"
+                ])
+                is_simple_message = len(message.split()) <= 3 and not any(char in message for char in ["?", "what", "how", "why", "when", "where"])
+                
+                # Handle greetings without RAG
+                if is_greeting and is_simple_message:
+                    answer = "Hello! I'm your vision research assistant, trained on PubMed scientific literature. I can help you with questions about:\n\n• Eye biology and anatomy\n• Vision disorders and diseases\n• Ophthalmology research\n• Retinal diseases (AMD, diabetic retinopathy, etc.)\n• Glaucoma and optic nerve disorders\n• Gene therapy and CRISPR for eye diseases\n• Single-cell research in vision\n\nWhat would you like to know about vision research?"
+                    citations = []
+                    source_docs = []
+                else:
+                    # Generate RAG response with chat history for context
+                    answer, citations, source_docs = await self._generate_rag_response(
+                        message, chat_history, collection_names or ["pubmed_vision_research"]
+                    )
                 
                 # Check if the response is out of scope
                 if "OUT_OF_SCOPE" in answer.strip():
@@ -505,17 +554,24 @@ class ChatService:
                     source_docs = []
             
             # Add assistant message
+            message_metadata = {
+                "model": "vision_rag",
+                "retrieval_k": retrieval_k or settings.RETRIEVAL_K,
+                "collections": collection_names or ["pubmed_vision_research"],
+                "source_documents": len(source_docs),
+                "search_type": search_type
+            }
+            
+            # Include MSigDB query_id in metadata if applicable
+            if search_type == "msigdb" and msigdb_results_data:
+                message_metadata["msigdb_query_id"] = msigdb_results_data.get("query_id")
+            
             assistant_message = await self.add_message(
                 db=db,
                 session_id=str(session.id),
                 role="assistant",
                 content=answer,
-                metadata={
-                    "model": "vision_rag",
-                    "retrieval_k": retrieval_k or settings.RETRIEVAL_K,
-                    "collections": collection_names or ["pubmed_vision_research"],
-                    "source_documents": len(source_docs)
-                }
+                metadata=message_metadata
             )
             
             # Add citations only if any exist (will be empty for out-of-scope questions)
@@ -531,7 +587,9 @@ class ChatService:
                 "citations": citations,
                 "source_documents": len(source_docs),
                 "spell_corrections": corrections if corrections else None,  # Include spell corrections in response
-                "original_query": original_message if corrections else None  # Include original if corrections were made
+                "original_query": original_message if corrections else None,  # Include original if corrections were made
+                "search_type": search_type,  # Include search type
+                "msigdb_results": msigdb_results_data if search_type == "msigdb" else None  # Include MSigDB results if applicable
             }
         
         except Exception as e:

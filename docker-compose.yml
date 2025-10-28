@@ -74,6 +74,7 @@ services:
       - pubmed_data:/data/pubmed_pdfs
       - processed_data:/data/processed
       - logs_data:/data/logs
+      - ./data/msigdb:/data/msigdb
     ports:
       - "8000:8000"
     depends_on:
@@ -109,6 +110,7 @@ services:
       - pubmed_data:/data/pubmed_pdfs
       - processed_data:/data/processed
       - logs_data:/data/logs
+      - ./data/msigdb:/data/msigdb
     depends_on:
       - redis
       - postgres
@@ -133,6 +135,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
     volumes:
       - ./backend:/app
+      - ./data/msigdb:/data/msigdb
     depends_on:
       - redis
       - postgres

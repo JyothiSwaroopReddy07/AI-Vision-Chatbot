@@ -114,6 +114,14 @@ class Settings(BaseSettings):
     PATHWAY_P_VALUE_THRESHOLD: float = 0.05
     PATHWAY_FDR_METHOD: str = "fdr_bh"
     
+    # MSigDB
+    MSIGDB_HUMAN_DB_PATH: str = "/data/msigdb/msigdb_v2025.1.Hs.db"
+    MSIGDB_MOUSE_DB_PATH: str = "/data/msigdb/msigdb_v2025.1.Mm.db"
+    MSIGDB_P_VALUE_THRESHOLD: float = 0.05
+    MSIGDB_FDR_METHOD: str = "fdr_bh"
+    MSIGDB_MIN_GENE_SET_SIZE: int = 5
+    MSIGDB_MAX_GENE_SET_SIZE: int = 500
+    
     # Email (Optional)
     SMTP_HOST: Optional[str] = None
     SMTP_PORT: int = 587

@@ -20,6 +20,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     collection_names: List[str] | None = None
     retrieval_k: int | None = None
+    search_type: str = "pubmed"  # "pubmed" or "msigdb"
 
 
 class Citation(BaseModel):
@@ -47,6 +48,8 @@ class ChatResponse(BaseModel):
     source_documents: int
     spell_corrections: List[SpellCorrection] | None = None
     original_query: str | None = None
+    search_type: str | None = None
+    msigdb_results: dict | None = None  # MSigDB-specific results
 
 
 class SessionResponse(BaseModel):
@@ -63,6 +66,7 @@ class MessageResponse(BaseModel):
     content: str
     created_at: str
     citations: List[Citation] = []
+    msigdb_results: dict | None = None  # Include MSigDB results if available
 
 
 @router.post("/message", response_model=ChatResponse)
@@ -79,7 +83,8 @@ async def send_message(
             session_id=request.session_id,
             message=request.message,
             collection_names=request.collection_names,
-            retrieval_k=request.retrieval_k
+            retrieval_k=request.retrieval_k,
+            search_type=request.search_type
         )
         
         return ChatResponse(
@@ -89,7 +94,9 @@ async def send_message(
             citations=[Citation(**c) for c in result.get("citations", [])],
             source_documents=result.get("source_documents", 0),
             spell_corrections=[SpellCorrection(**c) for c in result.get("spell_corrections", [])] if result.get("spell_corrections") else None,
-            original_query=result.get("original_query")
+            original_query=result.get("original_query"),
+            search_type=result.get("search_type"),
+            msigdb_results=result.get("msigdb_results")
         )
     
     except Exception as e:
@@ -228,12 +235,70 @@ async def get_chat_history(
                 relevance_score=citation.relevance_score
             ))
         
+        # Fetch MSigDB results if this message has them
+        msigdb_results_data = None
+        if message.message_metadata and message.message_metadata.get('msigdb_query_id'):
+            from sqlalchemy import select
+            from app.models.msigdb import MsigDBQuery, MsigDBResult
+            
+            query_id = message.message_metadata.get('msigdb_query_id')
+            
+            # Fetch the MSigDB query and results
+            query_result = await db.execute(
+                select(MsigDBQuery).where(MsigDBQuery.id == query_id)
+            )
+            msigdb_query = query_result.scalar_one_or_none()
+            
+            if msigdb_query:
+                # Fetch results for this query
+                results_query = await db.execute(
+                    select(MsigDBResult)
+                    .where(MsigDBResult.query_id == query_id)
+                    .order_by(MsigDBResult.rank)
+                )
+                msigdb_results = results_query.scalars().all()
+                
+                # Format results
+                results_list = []
+                for result in msigdb_results:
+                    results_list.append({
+                        "gene_set_id": result.gene_set_id,
+                        "gene_set_name": result.gene_set_name,
+                        "collection": result.collection,
+                        "sub_collection": result.sub_collection,
+                        "description": result.description,
+                        "species": result.species,
+                        "gene_set_size": result.gene_set_size,
+                        "overlap_count": result.overlap_count,
+                        "overlap_percentage": result.overlap_percentage,
+                        "p_value": result.p_value,
+                        "adjusted_p_value": result.adjusted_p_value,
+                        "odds_ratio": result.odds_ratio,
+                        "matched_genes": result.matched_genes,
+                        "all_genes": result.all_genes,  # Include all genes in the gene set
+                        "msigdb_url": result.msigdb_url,
+                        "external_url": result.external_url,
+                        "rank": result.rank
+                    })
+                
+                msigdb_results_data = {
+                    "query_id": str(msigdb_query.id),
+                    "query": msigdb_query.query_text,
+                    "genes": msigdb_query.genes_list,
+                    "species": msigdb_query.species,
+                    "search_type": msigdb_query.search_type,
+                    "collections": msigdb_query.collections or ["all"],
+                    "num_results": msigdb_query.num_results,
+                    "results": results_list
+                }
+        
         messages.append(MessageResponse(
             id=str(message.id),
             role=message.role,
             content=message.content,
             created_at=message.created_at.isoformat(),
-            citations=citations
+            citations=citations,
+            msigdb_results=msigdb_results_data
         ))
     
     return messages
