@@ -84,26 +84,69 @@ class ChatService:
         db: AsyncSession,
         user_id: str,
         include_archived: bool = False,
-        limit: int = 50
+        limit: int = 50,
+        offset: int = 0,
+        search_query: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> List[ChatSession]:
         """
-        Get user's chat sessions
+        Get user's chat sessions with filtering options
         
         Args:
             db: Database session
             user_id: User ID
             include_archived: Include archived sessions
             limit: Number of sessions to return
+            offset: Offset for pagination
+            search_query: Optional search query for title or content
+            start_date: Optional start date filter (ISO format)
+            end_date: Optional end date filter (ISO format)
             
         Returns:
             List of ChatSession objects
         """
+        from sqlalchemy import and_, or_
+        from datetime import datetime
+        
         query = select(ChatSession).where(ChatSession.user_id == user_id)
         
         if not include_archived:
             query = query.where(ChatSession.is_archived == False)
         
-        query = query.order_by(ChatSession.updated_at.desc()).limit(limit)
+        # Search filter
+        if search_query:
+            from app.models.chat import ChatMessage
+            # Search in session title or message content
+            search_pattern = f"%{search_query}%"
+            query = query.outerjoin(ChatMessage, ChatSession.id == ChatMessage.session_id)
+            query = query.where(
+                or_(
+                    ChatSession.title.ilike(search_pattern),
+                    ChatMessage.content.ilike(search_pattern)
+                )
+            ).distinct()
+        
+        # Date filters
+        if start_date:
+            try:
+                start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                query = query.where(ChatSession.created_at >= start_dt)
+            except ValueError:
+                pass  # Invalid date format, skip filter
+        
+        if end_date:
+            try:
+                end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                query = query.where(ChatSession.created_at <= end_dt)
+            except ValueError:
+                pass  # Invalid date format, skip filter
+        
+        query = query.order_by(ChatSession.updated_at.desc()).limit(limit).offset(offset)
+        
+        # Eagerly load messages relationship for message_count
+        from sqlalchemy.orm import selectinload
+        query = query.options(selectinload(ChatSession.messages))
         
         result = await db.execute(query)
         return result.scalars().all()
@@ -462,7 +505,9 @@ class ChatService:
             
             return {
                 "session_id": str(session.id),
-                "message_id": str(assistant_message.id),
+                "user_message_id": str(user_message.id),
+                "assistant_message_id": str(assistant_message.id),
+                "message_id": str(assistant_message.id),  # Keep for backward compatibility
                 "response": answer,
                 "citations": citations,
                 "source_documents": len(source_docs)

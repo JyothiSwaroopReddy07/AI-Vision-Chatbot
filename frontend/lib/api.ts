@@ -67,8 +67,12 @@ export const chatApi = {
     })
   },
 
-  getSessions: async () => {
-    return api.get('/chat/sessions')
+  getSessions: async (params?: any) => {
+    return api.get('/chat/sessions', { params })
+  },
+
+  getSession: async (sessionId: string) => {
+    return api.get(`/chat/session/${sessionId}`)
   },
 
   getHistory: async (sessionId: string) => {
@@ -77,6 +81,72 @@ export const chatApi = {
 
   deleteSession: async (sessionId: string) => {
     return api.delete(`/chat/history/${sessionId}`)
+  },
+}
+
+// Bookmarks API
+export const bookmarksApi = {
+  getFolders: async () => {
+    return api.get('/bookmarks/folders')
+  },
+
+  createFolder: async (name: string, description?: string, color?: string, icon?: string) => {
+    return api.post('/bookmarks/folders', { name, description, color, icon })
+  },
+
+  updateFolder: async (folderId: string, updates: any) => {
+    return api.put(`/bookmarks/folders/${folderId}`, updates)
+  },
+
+  deleteFolder: async (folderId: string) => {
+    return api.delete(`/bookmarks/folders/${folderId}`)
+  },
+
+  addChatToFolder: async (folderId: string, sessionId: string, notes?: string) => {
+    return api.post(`/bookmarks/folders/${folderId}/chats`, { session_id: sessionId, notes })
+  },
+
+  removeChatFromFolder: async (folderId: string, sessionId: string) => {
+    return api.delete(`/bookmarks/folders/${folderId}/chats/${sessionId}`)
+  },
+
+  getFolderChats: async (folderId: string, limit = 50, offset = 0) => {
+    return api.get(`/bookmarks/folders/${folderId}/chats`, { params: { limit, offset } })
+  },
+
+  getSessionFolders: async (sessionId: string) => {
+    return api.get(`/bookmarks/sessions/${sessionId}/folders`)
+  },
+}
+
+// Starred messages API
+export const starredApi = {
+  starMessage: async (messageId: string, notes?: string, tags?: string) => {
+    return api.post('/starred/star', { message_id: messageId, notes, tags })
+  },
+
+  unstarMessage: async (messageId: string) => {
+    return api.delete(`/starred/star/${messageId}`)
+  },
+
+  getStarStatus: async (messageId: string) => {
+    return api.get(`/starred/star/${messageId}/status`)
+  },
+
+  getStarredMessages: async (tag?: string, limit = 100, offset = 0) => {
+    return api.get('/starred/starred', { params: { tag, limit, offset } })
+  },
+
+  updateStarredMessage: async (starredId: string, notes?: string, tags?: string) => {
+    return api.put(`/starred/starred/${starredId}`, { notes, tags })
+  },
+
+  searchStarredMessages: async (query: string, limit = 50) => {
+    return api.get('/starred/starred/search', { params: { query, limit } })
+  },
+
+  getStarredCount: async () => {
+    return api.get('/starred/starred/count')
   },
 }
 

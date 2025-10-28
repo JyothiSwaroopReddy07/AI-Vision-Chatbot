@@ -93,15 +93,33 @@ async def send_message(
 async def get_sessions(
     include_archived: bool = False,
     limit: int = 50,
+    offset: int = 0,
+    search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get user's chat sessions"""
+    """
+    Get user's chat sessions with optional filtering
+    
+    Args:
+        include_archived: Include archived sessions
+        limit: Maximum number of sessions to return
+        offset: Number of sessions to skip (for pagination)
+        search: Search query for title or content
+        start_date: Filter sessions created after this date (ISO format)
+        end_date: Filter sessions created before this date (ISO format)
+    """
     sessions = await chat_service.get_user_sessions(
         db=db,
         user_id=str(current_user.id),
         include_archived=include_archived,
-        limit=limit
+        limit=limit,
+        offset=offset,
+        search_query=search,
+        start_date=start_date,
+        end_date=end_date
     )
     
     return [
@@ -110,10 +128,50 @@ async def get_sessions(
             title=session.title,
             created_at=session.created_at.isoformat(),
             updated_at=session.updated_at.isoformat(),
-            message_count=0  # Simplified for now
+            message_count=len(session.messages) if hasattr(session, 'messages') and session.messages else 0
         )
         for session in sessions
     ]
+
+
+@router.get("/session/{session_id}", response_model=SessionResponse)
+async def get_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get a single chat session by ID"""
+    from uuid import UUID
+    from sqlalchemy import select
+    from app.models.chat import ChatSession
+    
+    try:
+        session_uuid = UUID(session_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid session ID format"
+        )
+    
+    result = await db.execute(
+        select(ChatSession)
+        .where(ChatSession.id == session_uuid, ChatSession.user_id == current_user.id)
+    )
+    session = result.scalar_one_or_none()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+    
+    return SessionResponse(
+        id=str(session.id),
+        title=session.title,
+        created_at=session.created_at.isoformat(),
+        updated_at=session.updated_at.isoformat(),
+        message_count=0  # We don't need to load messages here
+    )
 
 
 @router.get("/history/{session_id}", response_model=List[MessageResponse])

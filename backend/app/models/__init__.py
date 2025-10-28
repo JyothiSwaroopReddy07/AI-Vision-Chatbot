@@ -7,6 +7,8 @@ from app.models.file import UploadedFile
 from app.models.pathway import PathwayJob
 from app.models.pubmed import PubMedArticle
 from app.models.preference import UserPreference
+from app.models.bookmark import BookmarkFolder, ChatBookmark
+from app.models.starred import StarredMessage
 
 __all__ = [
     "User",
@@ -17,5 +19,8 @@ __all__ = [
     "PathwayJob",
     "PubMedArticle",
     "UserPreference",
+    "BookmarkFolder",
+    "ChatBookmark",
+    "StarredMessage",
 ]
 

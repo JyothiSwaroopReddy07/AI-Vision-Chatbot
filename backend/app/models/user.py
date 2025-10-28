@@ -30,6 +30,8 @@ class User(Base):
     uploaded_files = relationship("UploadedFile", back_populates="user", cascade="all, delete-orphan")
     pathway_jobs = relationship("PathwayJob", back_populates="user", cascade="all, delete-orphan")
     preferences = relationship("UserPreference", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    bookmark_folders = relationship("BookmarkFolder", back_populates="user", cascade="all, delete-orphan")
+    starred_messages = relationship("StarredMessage", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<User {self.username}>"

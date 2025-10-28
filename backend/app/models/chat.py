@@ -25,6 +25,7 @@ class ChatSession(Base):
     user = relationship("User", back_populates="chat_sessions")
     messages = relationship("ChatMessage", back_populates="session", cascade="all, delete-orphan", order_by="ChatMessage.created_at")
     pathway_jobs = relationship("PathwayJob", back_populates="session")
+    bookmarks = relationship("ChatBookmark", back_populates="session", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<ChatSession {self.id}>"
@@ -45,6 +46,7 @@ class ChatMessage(Base):
     # Relationships
     session = relationship("ChatSession", back_populates="messages")
     citations = relationship("Citation", back_populates="message", cascade="all, delete-orphan")
+    starred_by = relationship("StarredMessage", back_populates="message", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<ChatMessage {self.id} - {self.role}>"

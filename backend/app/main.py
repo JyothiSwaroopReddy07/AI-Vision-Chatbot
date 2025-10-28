@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.database import async_engine
 from app.core.redis_client import redis_client
-from app.api import auth, chat, upload, pathway, pubmed, user
+from app.api import auth, chat, upload, pathway, pubmed, user, bookmarks, starred
 
 
 @asynccontextmanager
@@ -53,6 +53,8 @@ app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
 app.include_router(upload.router, prefix="/api/v1/upload", tags=["Upload"])
 app.include_router(pathway.router, prefix="/api/v1/pathway", tags=["Pathway"])
 app.include_router(pubmed.router, prefix="/api/v1/pubmed", tags=["PubMed"])
+app.include_router(bookmarks.router, prefix="/api/v1/bookmarks", tags=["Bookmarks"])
+app.include_router(starred.router, prefix="/api/v1/starred", tags=["Starred"])
 
 
 @app.get("/")
