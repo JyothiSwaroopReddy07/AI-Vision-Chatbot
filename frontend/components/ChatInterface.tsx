@@ -1,13 +1,15 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { useAuthStore, useChatStore } from '@/lib/store'
+import { useAuthStore, useChatStore, useMSigDBStore } from '@/lib/store'
 import { chatAPI } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 import StarButton from './StarButton'
 import EnhancedSidebar from './EnhancedSidebar'
 import AddToFolderModal from './AddToFolderModal'
 import SourcesModal from './SourcesModal'
+import SearchTypeToggle from './SearchTypeToggle'
+import MsigDBResultsPanel from './MsigDBResultsPanel'
 
 interface SpellCorrection {
   original: string
@@ -23,6 +25,7 @@ interface Message {
   timestamp: Date
   spell_corrections?: SpellCorrection[]
   original_query?: string
+  msigdb_results?: any  // Store MSigDB results with each message
 }
 
 interface Citation {
@@ -47,6 +50,7 @@ interface Session {
 export default function ChatInterface() {
   const { user, logout } = useAuthStore()
   const { sessionId, setSessionId } = useChatStore()
+  const { searchType, setResults, setShowResultsPanel, setLoading, currentResults, showResultsPanel, numResults } = useMSigDBStore()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -99,7 +103,8 @@ export default function ChatInterface() {
         role: msg.role,
         content: msg.content,
         citations: msg.citations || [],
-        timestamp: new Date(msg.created_at)
+        timestamp: new Date(msg.created_at),
+        msigdb_results: msg.msigdb_results || undefined  // Include MSigDB results from database
       }))
       setMessages(historyMessages)
       
@@ -127,9 +132,15 @@ export default function ChatInterface() {
     setMessages((prev) => [...prev, userMessage])
     setInput('')
     setIsLoading(true)
+    
+    // Set MSigDB loading state and open panel if MSigDB search
+    if (searchType === 'msigdb') {
+      setLoading(true)
+      setShowResultsPanel(true)
+    }
 
     try {
-      const response = await chatAPI.sendMessage(input, sessionId ?? undefined)
+      const response = await chatAPI.sendMessage(input, sessionId ?? undefined, searchType)
       const data = response.data
       
       console.log('API Response:', data) // Debug log
@@ -138,6 +149,16 @@ export default function ChatInterface() {
         setSessionId(data.session_id)
         // Trigger sidebar refresh to show the new session
         setSidebarRefreshKey(prev => prev + 1)
+      }
+
+      // Handle MSigDB results if present
+      if (data.msigdb_results) {
+        setResults(
+          data.msigdb_results.results || [],
+          data.msigdb_results.genes || [],
+          data.msigdb_results.species || 'auto',
+          data.msigdb_results.num_results || 0
+        )
       }
 
       // Update user message with real ID from backend
@@ -156,6 +177,7 @@ export default function ChatInterface() {
         timestamp: new Date(),
         spell_corrections: data.spell_corrections || undefined,
         original_query: data.original_query || undefined,
+        msigdb_results: data.msigdb_results || undefined,
       }
 
       console.log('Assistant message:', assistantMessage) // Debug log
@@ -222,6 +244,12 @@ export default function ChatInterface() {
     setEditingMessageId(null)
     setEditedContent('')
     setIsLoading(true)
+    
+    // Set MSigDB loading state and open panel if MSigDB search
+    if (searchType === 'msigdb') {
+      setLoading(true)
+      setShowResultsPanel(true)
+    }
 
     // Create new user message with edited content (temp ID)
     const tempUserId = 'temp-' + Date.now()
@@ -235,13 +263,23 @@ export default function ChatInterface() {
     setMessages((prev) => [...prev, userMessage])
 
     try {
-      const response = await chatAPI.sendMessage(editedText, sessionId ?? undefined)
+      const response = await chatAPI.sendMessage(editedText, sessionId ?? undefined, searchType)
       const data = response.data
       
       if (!sessionId && data.session_id) {
         setSessionId(data.session_id)
         // Trigger sidebar refresh to show the new session
         setSidebarRefreshKey(prev => prev + 1)
+      }
+
+      // Handle MSigDB results if present
+      if (data.msigdb_results) {
+        setResults(
+          data.msigdb_results.results || [],
+          data.msigdb_results.genes || [],
+          data.msigdb_results.species || 'auto',
+          data.msigdb_results.num_results || 0
+        )
       }
 
       // Update user message with real ID from backend
@@ -260,6 +298,7 @@ export default function ChatInterface() {
         timestamp: new Date(),
         spell_corrections: data.spell_corrections || undefined,
         original_query: data.original_query || undefined,
+        msigdb_results: data.msigdb_results || undefined,
       }
 
       // Replace the temp user message with the real one
@@ -576,6 +615,29 @@ export default function ChatInterface() {
                       message.original_query
                     )
                   )}
+                  
+                  {/* View MSigDB Results button for messages with results */}
+                  {message.role === 'assistant' && message.msigdb_results && message.msigdb_results.results && message.msigdb_results.results.length > 0 && (
+                    <div className="mt-3">
+                      <button
+                        onClick={() => {
+                          setResults(
+                            message.msigdb_results.results || [],
+                            message.msigdb_results.genes || [],
+                            message.msigdb_results.species || 'auto',
+                            message.msigdb_results.num_results || 0
+                          )
+                          setShowResultsPanel(true)
+                        }}
+                        className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors border border-blue-200"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                        </svg>
+                        View {message.msigdb_results.num_results || 0} Gene Sets
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
 
@@ -596,13 +658,18 @@ export default function ChatInterface() {
 
         {/* Clean Input Area */}
         <div className="input-container">
+          {/* Search Type Toggle */}
+          <div className="px-4 pb-3">
+            <SearchTypeToggle />
+          </div>
+          
           <div className="input-wrapper">
             <textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask anything..."
+              placeholder={searchType === 'msigdb' ? 'Enter gene symbols (e.g., TP53, BRCA1, EGFR)...' : 'Ask anything...'}
               className="input-field"
               rows={1}
               disabled={isLoading}
@@ -619,6 +686,9 @@ export default function ChatInterface() {
           </div>
         </div>
       </div>
+      
+      {/* MSigDB Results Panel */}
+      <MsigDBResultsPanel />
       
       {/* Add to Folder Modal */}
       {showAddToFolderModal && sessionId && (

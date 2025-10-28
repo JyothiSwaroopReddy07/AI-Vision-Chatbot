@@ -290,3 +290,78 @@ export const useStarredStore = create<StarredState>((set) => ({
   setSearchQuery: (query) => set({ searchQuery: query }),
 }))
 
+// MSigDB store
+interface GeneSetResult {
+  gene_set_id: string
+  gene_set_name: string
+  collection: string
+  sub_collection: string | null
+  description: string | null
+  species: string
+  gene_set_size: number
+  overlap_count: number
+  overlap_percentage: number
+  p_value: number
+  adjusted_p_value: number
+  odds_ratio: number
+  matched_genes: string[]
+  all_genes?: string[]  // All genes in the gene set
+  msigdb_url: string | null
+  external_url: string | null
+  rank: number
+  match_type?: string
+}
+
+interface MSigDBState {
+  searchType: 'pubmed' | 'msigdb'
+  currentResults: GeneSetResult[] | null
+  selectedGeneSet: GeneSetResult | null
+  showResultsPanel: boolean
+  isLoading: boolean
+  queryGenes: string[]
+  species: string
+  numResults: number
+  setSearchType: (type: 'pubmed' | 'msigdb') => void
+  setResults: (results: GeneSetResult[] | null, genes?: string[], species?: string, numResults?: number) => void
+  setSelectedGeneSet: (geneSet: GeneSetResult | null) => void
+  setShowResultsPanel: (show: boolean) => void
+  setLoading: (loading: boolean) => void
+  clearResults: () => void
+}
+
+export const useMSigDBStore = create<MSigDBState>((set) => ({
+  searchType: 'pubmed',
+  currentResults: null,
+  selectedGeneSet: null,
+  showResultsPanel: false,
+  isLoading: false,
+  queryGenes: [],
+  species: 'auto',
+  numResults: 0,
+
+  setSearchType: (type) => set({ searchType: type }),
+
+  setResults: (results, genes = [], species = 'auto', numResults = 0) => set({
+    currentResults: results ? [...results] : null, // Create new array reference
+    queryGenes: [...genes], // Create new array reference
+    species,
+    numResults,
+    showResultsPanel: results !== null && results.length > 0,
+    isLoading: false  // Turn off loading when results are set
+  }),
+
+  setSelectedGeneSet: (geneSet) => set({ selectedGeneSet: geneSet }),
+
+  setShowResultsPanel: (show) => set({ showResultsPanel: show }),
+
+  setLoading: (loading) => set({ isLoading: loading }),
+
+  clearResults: () => set({
+    currentResults: null,
+    selectedGeneSet: null,
+    showResultsPanel: false,
+    queryGenes: [],
+    numResults: 0
+  }),
+}))
+

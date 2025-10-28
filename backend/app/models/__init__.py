@@ -9,6 +9,7 @@ from app.models.pubmed import PubMedArticle
 from app.models.preference import UserPreference
 from app.models.bookmark import BookmarkFolder, ChatBookmark
 from app.models.starred import StarredMessage
+from app.models.msigdb import MsigDBQuery, MsigDBResult
 
 __all__ = [
     "User",
@@ -22,5 +23,7 @@ __all__ = [
     "BookmarkFolder",
     "ChatBookmark",
     "StarredMessage",
+    "MsigDBQuery",
+    "MsigDBResult",
 ]
 

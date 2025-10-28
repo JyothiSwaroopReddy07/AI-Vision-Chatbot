@@ -60,10 +60,11 @@ export const authAPI = {
 }
 
 export const chatApi = {
-  sendMessage: async (message: string, sessionId?: string) => {
+  sendMessage: async (message: string, sessionId?: string, searchType: string = 'pubmed') => {
     return api.post('/chat/message', {
       message,
       session_id: sessionId,
+      search_type: searchType,
     })
   },
 
@@ -180,6 +181,39 @@ export const uploadApi = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+    })
+  },
+}
+
+// MSigDB API
+export const msigdbAPI = {
+  search: async (
+    query: string,
+    species: string = 'auto',
+    searchType: string = 'exact',
+    collections: string[] | null = null
+  ) => {
+    return api.post('/msigdb/search', {
+      query,
+      species,
+      search_type: searchType,
+      collections,
+    })
+  },
+
+  getGeneSet: async (geneSetName: string, species: string = 'human') => {
+    return api.get(`/msigdb/gene-set/${geneSetName}`, {
+      params: { species },
+    })
+  },
+
+  getCollections: async () => {
+    return api.get('/msigdb/collections')
+  },
+
+  getHistory: async (limit: number = 50) => {
+    return api.get('/msigdb/history', {
+      params: { limit },
     })
   },
 }

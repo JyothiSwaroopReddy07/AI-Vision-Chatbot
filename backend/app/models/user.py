@@ -32,6 +32,7 @@ class User(Base):
     preferences = relationship("UserPreference", back_populates="user", uselist=False, cascade="all, delete-orphan")
     bookmark_folders = relationship("BookmarkFolder", back_populates="user", cascade="all, delete-orphan")
     starred_messages = relationship("StarredMessage", back_populates="user", cascade="all, delete-orphan")
+    msigdb_queries = relationship("MsigDBQuery", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<User {self.username}>"
