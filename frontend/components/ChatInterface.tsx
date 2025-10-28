@@ -4,6 +4,9 @@ import { useState, useRef, useEffect } from 'react'
 import { useAuthStore, useChatStore } from '@/lib/store'
 import { chatAPI } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
+import StarButton from './StarButton'
+import EnhancedSidebar from './EnhancedSidebar'
+import AddToFolderModal from './AddToFolderModal'
 
 interface Message {
   id: string
@@ -44,10 +47,12 @@ export default function ChatInterface() {
     }
     return false
   })
-  const [sessions, setSessions] = useState<Session[]>([])
+  const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [editedContent, setEditedContent] = useState('')
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
+  const [showAddToFolderModal, setShowAddToFolderModal] = useState(false)
+  const [currentSessionTitle, setCurrentSessionTitle] = useState('Untitled Conversation')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -66,11 +71,6 @@ export default function ChatInterface() {
     }
   }, [showSidebar])
 
-  // Load sessions on mount
-  useEffect(() => {
-    loadSessions()
-  }, [])
-
   // Load history when sessionId changes
   useEffect(() => {
     if (sessionId) {
@@ -79,15 +79,6 @@ export default function ChatInterface() {
       setMessages([])
     }
   }, [sessionId])
-
-  const loadSessions = async () => {
-    try {
-      const response = await chatAPI.getSessions()
-      setSessions(response.data)
-    } catch (error) {
-      console.error('Error loading sessions:', error)
-    }
-  }
 
   const loadSessionHistory = async (id: string) => {
     try {
@@ -100,6 +91,12 @@ export default function ChatInterface() {
         timestamp: new Date(msg.created_at)
       }))
       setMessages(historyMessages)
+      
+      // Get session details to update title
+      const sessionResponse = await chatAPI.getSession(id)
+      if (sessionResponse.data) {
+        setCurrentSessionTitle(sessionResponse.data.title || 'Untitled Conversation')
+      }
     } catch (error) {
       console.error('Error loading history:', error)
     }
@@ -108,8 +105,9 @@ export default function ChatInterface() {
   const handleSendMessage = async () => {
     if (!input.trim() || isLoading) return
 
+    const tempUserId = 'temp-' + Date.now()
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: tempUserId,
       role: 'user',
       content: input,
       timestamp: new Date(),
@@ -127,12 +125,20 @@ export default function ChatInterface() {
       
       if (!sessionId && data.session_id) {
         setSessionId(data.session_id)
-        // Reload sessions to show the new one
-        loadSessions()
+        // Trigger sidebar refresh to show the new session
+        setSidebarRefreshKey(prev => prev + 1)
+      }
+
+      // Update user message with real ID from backend
+      const updatedUserMessage: Message = {
+        id: data.user_message_id || tempUserId,
+        role: 'user',
+        content: input,
+        timestamp: new Date(),
       }
 
       const assistantMessage: Message = {
-        id: data.message_id || Date.now().toString(),
+        id: data.assistant_message_id || data.message_id || Date.now().toString(),
         role: 'assistant',
         content: data.response || 'No response',
         citations: data.citations || [],
@@ -140,7 +146,18 @@ export default function ChatInterface() {
       }
 
       console.log('Assistant message:', assistantMessage) // Debug log
-      setMessages((prev) => [...prev, assistantMessage])
+      
+      // Replace the temp user message with the real one
+      setMessages((prev) => {
+        const filtered = prev.filter(m => m.id !== tempUserId)
+        return [...filtered, updatedUserMessage, assistantMessage]
+      })
+      
+      // Update session title if this is the first message
+      if (messages.length === 0) {
+        const title = input.length > 50 ? input.substring(0, 47) + '...' : input
+        setCurrentSessionTitle(title)
+      }
     } catch (error) {
       console.error('Error sending message:', error)
       const errorMessage: Message = {
@@ -193,9 +210,10 @@ export default function ChatInterface() {
     setEditedContent('')
     setIsLoading(true)
 
-    // Create new user message with edited content
+    // Create new user message with edited content (temp ID)
+    const tempUserId = 'temp-' + Date.now()
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: tempUserId,
       role: 'user',
       content: editedText,
       timestamp: new Date(),
@@ -209,18 +227,31 @@ export default function ChatInterface() {
       
       if (!sessionId && data.session_id) {
         setSessionId(data.session_id)
-        loadSessions()
+        // Trigger sidebar refresh to show the new session
+        setSidebarRefreshKey(prev => prev + 1)
+      }
+
+      // Update user message with real ID from backend
+      const updatedUserMessage: Message = {
+        id: data.user_message_id || tempUserId,
+        role: 'user',
+        content: editedText,
+        timestamp: new Date(),
       }
 
       const assistantMessage: Message = {
-        id: data.message_id || Date.now().toString(),
+        id: data.assistant_message_id || data.message_id || Date.now().toString(),
         role: 'assistant',
         content: data.response || 'No response',
         citations: data.citations || [],
         timestamp: new Date(),
       }
 
-      setMessages((prev) => [...prev, assistantMessage])
+      // Replace the temp user message with the real one
+      setMessages((prev) => {
+        const filtered = prev.filter(m => m.id !== tempUserId)
+        return [...filtered, updatedUserMessage, assistantMessage]
+      })
     } catch (error) {
       console.error('Error sending message:', error)
       const errorMessage: Message = {
@@ -273,7 +304,7 @@ export default function ChatInterface() {
 
   return (
     <div className="flex h-screen bg-white overflow-hidden">
-      {/* Minimal Sidebar */}
+      {/* Enhanced Sidebar */}
       {showSidebar && (
         <>
           {/* Mobile overlay */}
@@ -281,42 +312,21 @@ export default function ChatInterface() {
             className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
             onClick={() => setShowSidebar(false)}
           />
-          <div className="sidebar z-50">
-          <div className="p-4 border-b border-gray-200">
-            <button
-              onClick={() => {
+          <div className="fixed md:relative inset-y-0 left-0 z-50 md:z-auto">
+            <EnhancedSidebar
+              key={sidebarRefreshKey}
+              onClose={() => setShowSidebar(false)}
+              onSelectSession={(id) => {
+                setSessionId(id)
+                setShowSidebar(false)
+              }}
+              onNewChat={() => {
                 setMessages([])
                 setSessionId(null)
                 setShowSidebar(false)
               }}
-              className="w-full py-2 px-4 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              + New Chat
-            </button>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-4">
-            <div className="text-xs font-semibold text-gray-500 uppercase mb-2">Chat History</div>
-            {sessions.length === 0 ? (
-              <div className="text-sm text-gray-500 text-center py-4">No previous chats</div>
-            ) : (
-              sessions.map((session) => (
-                <div
-                  key={session.id}
-                  onClick={() => {
-                    setSessionId(session.id)
-                    setShowSidebar(false)
-                  }}
-                  className={`sidebar-item ${sessionId === session.id ? 'active' : ''}`}
-                >
-                  <div className="truncate font-medium">{session.title}</div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    {new Date(session.updated_at).toLocaleDateString()}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+              currentSessionId={sessionId}
+            />
           </div>
         </>
       )}
@@ -325,22 +335,50 @@ export default function ChatInterface() {
       <div className="flex-1 flex flex-col">
         {/* Clean Header */}
         <div className="header">
-          <div className="flex items-center">
+          <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
             <button
               onClick={() => setShowSidebar(!showSidebar)}
-              className="p-2 hover:bg-gray-100 rounded-lg mr-2 md:mr-3 transition-colors"
+              className="p-2 hover:bg-gray-100 rounded-lg transition-colors flex-shrink-0"
               aria-label="Toggle sidebar"
             >
               <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <div className="logo">
+            <div className="logo flex-shrink-0">
               <span className="text-sm md:text-base">Vision Research AI</span>
             </div>
+            
+            {/* Save Conversation Button */}
+            {sessionId && messages.length > 0 && (
+              <button
+                onClick={() => setShowAddToFolderModal(true)}
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-gray-300 hover:border-blue-300"
+                title="Save conversation to folder"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+                <span>Save</span>
+              </button>
+            )}
+            
+            {/* Mobile Save Button */}
+            {sessionId && messages.length > 0 && (
+              <button
+                onClick={() => setShowAddToFolderModal(true)}
+                className="sm:hidden p-2 text-gray-700 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                title="Save conversation"
+                aria-label="Save conversation"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+              </button>
+            )}
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-shrink-0">
             <div className="hidden md:flex items-center gap-2 text-sm text-gray-600">
               <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center text-xs font-semibold text-blue-700">
                 {user?.email?.[0].toUpperCase()}
@@ -395,7 +433,11 @@ export default function ChatInterface() {
               {messages.map((message) => (
                 <div key={message.id} className="message-container group">
                   {/* Action buttons - floating on hover */}
-                  <div className="flex items-center justify-end mb-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center justify-end gap-1 mb-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {message.role === 'user' && !message.id.startsWith('temp-') && (
+                      <StarButton messageId={message.id} size="sm" />
+                    )}
+                    
                     {message.role === 'user' && !editingMessageId && (
                       <button
                         onClick={() => handleEditMessage(message.id, message.content)}
@@ -521,6 +563,15 @@ export default function ChatInterface() {
           </div>
         </div>
       </div>
+      
+      {/* Add to Folder Modal */}
+      {showAddToFolderModal && sessionId && (
+        <AddToFolderModal
+          sessionId={sessionId}
+          sessionTitle={currentSessionTitle}
+          onClose={() => setShowAddToFolderModal(false)}
+        />
+      )}
     </div>
   )
 }
