@@ -33,12 +33,20 @@ class Citation(BaseModel):
     relevance_score: float | None
 
 
+class SpellCorrection(BaseModel):
+    original: str
+    corrected: str
+    type: str
+
+
 class ChatResponse(BaseModel):
     session_id: str
     message_id: str
     response: str
     citations: List[Citation]
     source_documents: int
+    spell_corrections: List[SpellCorrection] | None = None
+    original_query: str | None = None
 
 
 class SessionResponse(BaseModel):
@@ -79,7 +87,9 @@ async def send_message(
             message_id=result["message_id"],
             response=result["response"],
             citations=[Citation(**c) for c in result.get("citations", [])],
-            source_documents=result.get("source_documents", 0)
+            source_documents=result.get("source_documents", 0),
+            spell_corrections=[SpellCorrection(**c) for c in result.get("spell_corrections", [])] if result.get("spell_corrections") else None,
+            original_query=result.get("original_query")
         )
     
     except Exception as e:

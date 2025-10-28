@@ -7,6 +7,13 @@ import ReactMarkdown from 'react-markdown'
 import StarButton from './StarButton'
 import EnhancedSidebar from './EnhancedSidebar'
 import AddToFolderModal from './AddToFolderModal'
+import SourcesModal from './SourcesModal'
+
+interface SpellCorrection {
+  original: string
+  corrected: string
+  type: string
+}
 
 interface Message {
   id: string
@@ -14,6 +21,8 @@ interface Message {
   content: string
   citations?: Citation[]
   timestamp: Date
+  spell_corrections?: SpellCorrection[]
+  original_query?: string
 }
 
 interface Citation {
@@ -53,6 +62,8 @@ export default function ChatInterface() {
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [showAddToFolderModal, setShowAddToFolderModal] = useState(false)
   const [currentSessionTitle, setCurrentSessionTitle] = useState('Untitled Conversation')
+  const [showSourcesModal, setShowSourcesModal] = useState(false)
+  const [selectedSourcesCitations, setSelectedSourcesCitations] = useState<Citation[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -143,6 +154,8 @@ export default function ChatInterface() {
         content: data.response || 'No response',
         citations: data.citations || [],
         timestamp: new Date(),
+        spell_corrections: data.spell_corrections || undefined,
+        original_query: data.original_query || undefined,
       }
 
       console.log('Assistant message:', assistantMessage) // Debug log
@@ -245,6 +258,8 @@ export default function ChatInterface() {
         content: data.response || 'No response',
         citations: data.citations || [],
         timestamp: new Date(),
+        spell_corrections: data.spell_corrections || undefined,
+        original_query: data.original_query || undefined,
       }
 
       // Replace the temp user message with the real one
@@ -271,23 +286,45 @@ export default function ChatInterface() {
     setEditedContent('')
   }
 
-  const renderMessageWithCitations = (content: string, citations?: Citation[], isUser: boolean = false) => {
+  const renderMessageWithCitations = (content: string, citations?: Citation[], isUser: boolean = false, spellCorrections?: SpellCorrection[], originalQuery?: string) => {
     // For user messages, render larger text without markdown
     if (isUser) {
       return <div className="user-query-text">{content}</div>
     }
     
-    // For assistant messages, render markdown
+    // For assistant messages, render markdown with spell correction notice if applicable
     return (
+      <>
+        {spellCorrections && spellCorrections.length > 0 && (
+          <div className="spell-correction-notice">
+            <div className="flex items-start gap-2 text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+              <svg className="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="flex-1">
+                <div className="font-medium mb-1">✓ Spell check applied</div>
+                <div className="text-xs">
+                  {spellCorrections.map((correction, idx) => (
+                    <div key={idx} className="mb-1">
+                      <span className="line-through opacity-70">{correction.original}</span>
+                      {' → '}
+                      <span className="font-medium">{correction.corrected}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       <div className="assistant-response-text">
         <ReactMarkdown
           components={{
-            p: ({ children }) => <p className="mb-4 last:mb-0">{children}</p>,
+            p: ({ children }) => <p className="mb-4 last:mb-0 leading-relaxed">{children}</p>,
             strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
             em: ({ children }) => <em className="italic">{children}</em>,
-            ol: ({ children }) => <ol className="list-decimal list-inside mb-4 space-y-2">{children}</ol>,
-            ul: ({ children }) => <ul className="list-disc list-inside mb-4 space-y-2">{children}</ul>,
-            li: ({ children }) => <li className="ml-4">{children}</li>,
+            ol: ({ children }) => <ol className="list-decimal ml-6 mb-4 space-y-2 leading-relaxed">{children}</ol>,
+            ul: ({ children }) => <ul className="list-disc ml-6 mb-4 space-y-2 leading-relaxed">{children}</ul>,
+            li: ({ children }) => <li className="pl-2 leading-relaxed">{children}</li>,
             h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6">{children}</h1>,
             h2: ({ children }) => <h2 className="text-xl font-bold mb-3 mt-5">{children}</h2>,
             h3: ({ children }) => <h3 className="text-lg font-semibold mb-2 mt-4">{children}</h3>,
@@ -299,6 +336,7 @@ export default function ChatInterface() {
           {content}
         </ReactMarkdown>
       </div>
+      </>
     )
   }
 
@@ -467,28 +505,40 @@ export default function ChatInterface() {
                     </button>
                   </div>
                   
-                  {/* Perplexity-style: Compact sources at the TOP for assistant messages */}
+                  {/* Perplexity-style: Compact SQUARE sources at the TOP for assistant messages */}
                   {message.role === 'assistant' && message.citations && message.citations.length > 0 && (
-                    <div className="sources-top">
-                      {message.citations.map((citation, idx) => (
+                    <div className="flex items-center gap-2 mb-4 flex-wrap">
+                      {message.citations.slice(0, 3).map((citation, idx) => (
                         <a
                           key={idx}
                           href={citation.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="source-pill"
+                          className="perplexity-source-card"
                           title={citation.title}
                         >
-                          <span className="source-pill-number">{idx + 1}</span>
-                          <div className="source-pill-content">
-                            <div className="source-pill-title">{citation.title}</div>
-                            <div className="source-pill-meta">{citation.journal}</div>
-                          </div>
-                          <svg className="source-pill-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
+                          <div className="perplexity-source-number">{idx + 1}</div>
+                          <div className="perplexity-source-title">{citation.title}</div>
+                          <div className="perplexity-source-journal">{citation.journal || 'Research Paper'}</div>
                         </a>
                       ))}
+                      
+                      {message.citations.length > 3 && (
+                        <button
+                          onClick={() => {
+                            setSelectedSourcesCitations(message.citations || [])
+                            setShowSourcesModal(true)
+                          }}
+                          className="perplexity-source-more"
+                        >
+                          <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                          </svg>
+                          <span className="text-xs font-medium">
+                            +{message.citations.length - 3} more
+                          </span>
+                        </button>
+                      )}
                     </div>
                   )}
                   
@@ -518,7 +568,13 @@ export default function ChatInterface() {
                       </div>
                     </div>
                   ) : (
-                    renderMessageWithCitations(message.content, message.citations, message.role === 'user')
+                    renderMessageWithCitations(
+                      message.content, 
+                      message.citations, 
+                      message.role === 'user',
+                      message.spell_corrections,
+                      message.original_query
+                    )
                   )}
                 </div>
               ))}
@@ -572,6 +628,13 @@ export default function ChatInterface() {
           onClose={() => setShowAddToFolderModal(false)}
         />
       )}
+      
+      {/* Sources Modal */}
+      <SourcesModal
+        isOpen={showSourcesModal}
+        onClose={() => setShowSourcesModal(false)}
+        citations={selectedSourcesCitations}
+      />
     </div>
   )
 }
