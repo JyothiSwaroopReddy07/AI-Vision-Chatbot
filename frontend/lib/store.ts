@@ -98,6 +98,12 @@ interface Citation {
   relevance_score?: number
 }
 
+interface SpellCorrection {
+  original: string
+  corrected: string
+  type: string
+}
+
 interface Message {
   id: string
   role: 'user' | 'assistant'
@@ -105,6 +111,8 @@ interface Message {
   citations?: Citation[]
   timestamp: string
   is_starred?: boolean
+  spell_corrections?: SpellCorrection[]
+  original_query?: string
 }
 
 interface ChatSession {

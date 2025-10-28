@@ -13,6 +13,10 @@ from app.models.citation import Citation
 from app.rag.chain import rag_chain
 from app.core.config import settings
 from app.rag.vector_store import vector_store_manager
+from app.utils.spell_checker import correct_user_query
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ChatService:
@@ -417,6 +421,21 @@ class ChatService:
             Dictionary with response and metadata
         """
         try:
+            # ============================================
+            # SPELL CHECKING - Correct user query first
+            # ============================================
+            original_message = message
+            corrected_message, corrections = correct_user_query(message)
+            
+            # Log corrections if any were made
+            if corrections:
+                logger.info(f"Spell corrections made for query: {corrections}")
+                logger.info(f"Original: '{original_message}' -> Corrected: '{corrected_message}'")
+            
+            # Use the corrected message for processing
+            message = corrected_message
+            # ============================================
+            
             # Get existing session or prepare to create new one
             if session_id:
                 session = await self.get_session(db, session_id, str(user.id))
@@ -424,7 +443,7 @@ class ChatService:
                     raise ValueError("Session not found")
             else:
                 # Only create session when we actually have a message to add
-                # Generate a title from the first message
+                # Generate a title from the first message (use corrected version)
                 title = message[:50] + "..." if len(message) > 50 else message
                 session = await self.create_session(db, user, title=title)
             
@@ -510,7 +529,9 @@ class ChatService:
                 "message_id": str(assistant_message.id),  # Keep for backward compatibility
                 "response": answer,
                 "citations": citations,
-                "source_documents": len(source_docs)
+                "source_documents": len(source_docs),
+                "spell_corrections": corrections if corrections else None,  # Include spell corrections in response
+                "original_query": original_message if corrections else None  # Include original if corrections were made
             }
         
         except Exception as e:
