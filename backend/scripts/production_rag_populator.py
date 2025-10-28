@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""
-CONCURRENT RAG POPULATION WITH SEPARATE WORKER POOLS
-=====================================================
 
-This script uses separate worker pools for different tasks:
-- 5 PubMed API workers (download metadata)
-- 3 PDF extraction workers (parallel PDF downloads & extraction)
-- 2 Indexing workers (parallel ChromaDB indexing)
-
-Expected: 10,000+ articles with 2,000+ full-text PDFs in ~45 minutes
-
-Author: Full-Stack AI Engineer
-"""
 
 import sys
 import os
