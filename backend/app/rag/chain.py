@@ -339,6 +339,55 @@ Answer:"""
             "citations": citations
         }
     
+    def _is_vision_related(self, question: str) -> bool:
+        """
+        Check if question is related to vision/eye research using keyword matching
+        
+        Args:
+            question: User question
+            
+        Returns:
+            True if vision-related, False otherwise
+        """
+        question_lower = question.lower()
+        
+        # Vision-related keywords
+        vision_keywords = [
+            # Eye anatomy
+            'eye', 'eyes', 'retina', 'retinal', 'cornea', 'corneal', 'lens', 'iris', 'pupil',
+            'macula', 'macular', 'fovea', 'optic nerve', 'choroid', 'sclera', 'vitreous',
+            'photoreceptor', 'rod', 'cone', 'ganglion',
+            
+            # Vision terms
+            'vision', 'visual', 'sight', 'seeing', 'blind', 'blindness', 'low vision',
+            'visual acuity', 'visual field', 'visual impairment',
+            
+            # Eye diseases
+            'amd', 'macular degeneration', 'glaucoma', 'cataract', 'diabetic retinopathy',
+            'retinopathy', 'retinitis pigmentosa', 'uveitis', 'keratoconus', 'dry eye',
+            'stargardt', 'leber', 'choroideremia', 'retinal detachment', 'macular hole',
+            'epiretinal membrane', 'drusen', 'geographic atrophy', 'keratitis',
+            
+            # Treatments
+            'anti-vegf', 'ranibizumab', 'aflibercept', 'bevacizumab', 'lucentis', 'eylea',
+            'vitrectomy', 'lasik', 'cataract surgery', 'corneal transplant',
+            
+            # Imaging
+            'oct', 'optical coherence tomography', 'fundus', 'angiography', 'fluorescein',
+            'autofluorescence', 'ophthalmoscopy', 'perimetry',
+            
+            # Medical terms
+            'ophthalmology', 'ophthalmologist', 'optometry', 'optometrist', 'intraocular',
+            'ocular', 'ophthalmic'
+        ]
+        
+        # Check if any vision keyword is in the question
+        for keyword in vision_keywords:
+            if keyword in question_lower:
+                return True
+        
+        return False
+    
     def query_with_custom_retrieval(
         self,
         question: str,
@@ -358,6 +407,14 @@ Answer:"""
         Returns:
             Dictionary with answer and source documents
         """
+        # Pre-filter: Check if question is vision-related
+        if not self._is_vision_related(question):
+            return {
+                "answer": "OUT_OF_SCOPE",
+                "source_documents": [],
+                "citations": []
+            }
+        
         # Ensure LLM is initialized
         self._ensure_initialized()
         
@@ -447,9 +504,13 @@ Chat History (use this to understand the conversation context and what the user 
 
 Current Question: {question}
 
-First, determine if this question is related to eye/vision research. If NOT, respond with EXACTLY: "OUT_OF_SCOPE"
+CRITICAL INSTRUCTIONS:
+1. You can ONLY answer questions about eye/vision research, ophthalmology, and related medical topics.
+2. If the question is about movies, celebrities, general knowledge, politics, sports, or ANY non-medical topic, you MUST respond with EXACTLY: "OUT_OF_SCOPE"
+3. Do NOT make up information. Only use the PubMed research context provided above.
+4. If the context doesn't contain relevant information, say you don't have enough information.
 
-If it IS related to vision/eye research, provide a detailed, scientifically accurate answer based on the PubMed literature context above. If this is a follow-up question, make sure to answer about the topic from the chat history:
+Now provide your answer based ONLY on the PubMed literature context above:
 
 Answer:"""
         

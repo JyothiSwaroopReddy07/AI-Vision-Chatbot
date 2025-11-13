@@ -284,6 +284,22 @@ class ChatService:
             citations = result["citations"]
             source_docs = result["source_documents"]
             
+            # Check if the question is out of scope
+            if answer.strip() == "OUT_OF_SCOPE" or "OUT_OF_SCOPE" in answer:
+                out_of_scope_message = (
+                    "I apologize, but I can only answer questions related to eye and vision research, "
+                    "ophthalmology, and related medical topics based on PubMed scientific literature.\n\n"
+                    "Your question appears to be outside my area of expertise. "
+                    "Please ask me about:\n"
+                    "• Eye diseases (AMD, glaucoma, diabetic retinopathy, etc.)\n"
+                    "• Vision disorders and treatments\n"
+                    "• Eye anatomy and physiology\n"
+                    "• Ophthalmology research and clinical studies\n"
+                    "• Gene mutations related to eye diseases\n"
+                    "• Visual impairments and rehabilitation"
+                )
+                return out_of_scope_message, [], []
+            
             return answer, citations, source_docs
             
         except Exception as e:
