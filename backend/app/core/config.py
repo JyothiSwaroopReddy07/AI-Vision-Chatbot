@@ -43,9 +43,11 @@ class Settings(BaseSettings):
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     
     # Local LLM (optional)
-    LOCAL_LLM_MODEL: str = "mistralai/Mistral-7B-Instruct-v0.2"
+    LOCAL_LLM_BASE_URL: str = "http://localhost:8080"
+    LOCAL_LLM_MODEL: str = "microsoft/phi-2"
     LOCAL_LLM_DEVICE: str = "cpu"
     LOCAL_LLM_MAX_LENGTH: int = 4096
+    LOCAL_LLM_API_KEY: str = "EMPTY"  # Placeholder for local models
     
     # Embedding
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"

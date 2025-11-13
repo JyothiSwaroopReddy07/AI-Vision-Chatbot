@@ -203,8 +203,20 @@ IMPORTANT INSTRUCTIONS:
                 max_tokens=settings.MAX_TOKENS,
                 openai_api_key=settings.OPENAI_API_KEY
             )
+        elif settings.LLM_PROVIDER == "local":
+            # Local LLM using OpenAI-compatible API (TGI, vLLM, llama.cpp)
+            return ChatOpenAI(
+                model=settings.LOCAL_LLM_MODEL,
+                temperature=settings.TEMPERATURE,
+                max_tokens=settings.MAX_TOKENS,
+                openai_api_key=settings.LOCAL_LLM_API_KEY,
+                openai_api_base=settings.LOCAL_LLM_BASE_URL,
+                model_kwargs={
+                    "top_p": settings.TOP_P,
+                }
+            )
         else:
-            # Local LLM using HuggingFace
+            # Fallback: Local LLM using HuggingFace Pipeline (slower, but works without server)
             from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
             
             tokenizer = AutoTokenizer.from_pretrained(settings.LOCAL_LLM_MODEL)
