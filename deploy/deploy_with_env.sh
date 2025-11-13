@@ -92,8 +92,11 @@ echo "✓ Directories created"
 echo ""
 echo "[5/8] Checking for GPU..."
 if command -v nvidia-smi &> /dev/null; then
-    echo "✓ GPU detected:"
-    nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+    if nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/dev/null; then
+        echo "✓ GPU detected and working"
+    else
+        echo "⚠️  GPU detected but driver not working - will use CPU (slower)"
+    fi
 else
     echo "⚠️  No GPU detected - will use CPU (slower)"
 fi
