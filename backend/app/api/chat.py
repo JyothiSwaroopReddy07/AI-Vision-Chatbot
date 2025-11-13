@@ -204,11 +204,9 @@ async def get_chat_history(
         user_id=str(current_user.id)
     )
     
+    # Return empty array if session doesn't exist yet (will be created on first message)
     if not session:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found"
-        )
+        return []
     
     messages = []
     for message in session.messages:
