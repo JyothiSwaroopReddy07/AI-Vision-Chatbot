@@ -284,8 +284,8 @@ class ChatService:
             citations = result["citations"]
             source_docs = result["source_documents"]
             
-            # Check if the question is out of scope
-            if answer.strip() == "OUT_OF_SCOPE" or "OUT_OF_SCOPE" in answer:
+            # Check if the question is out of scope (exact match only)
+            if answer.strip().upper() == "OUT_OF_SCOPE":
                 out_of_scope_message = (
                     "I apologize, but I can only answer questions related to eye and vision research, "
                     "ophthalmology, and related medical topics based on PubMed scientific literature.\n\n"
