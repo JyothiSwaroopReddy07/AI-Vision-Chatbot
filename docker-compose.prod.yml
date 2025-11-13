@@ -70,7 +70,7 @@ services:
     volumes:
       - llm_models:/data
     ports:
-      - "8080:80"
+      - "8082:80"
     shm_size: 1g
     networks:
       - vision_network
