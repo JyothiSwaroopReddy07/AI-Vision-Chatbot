@@ -55,7 +55,7 @@ services:
       - vision_network
     restart: unless-stopped
 
-  # Local LLM Service (2B Parameter Model)
+  # Local LLM Service (2B Parameter Model) - CPU Mode
   llm:
     image: ghcr.io/huggingface/text-generation-inference:2.0
     container_name: vision_llm
@@ -66,18 +66,12 @@ services:
       - MAX_INPUT_LENGTH=2048
       - MAX_BATCH_PREFILL_TOKENS=4096
       - HUGGING_FACE_HUB_TOKEN=${HUGGINGFACE_TOKEN}
+      - CUDA_VISIBLE_DEVICES=""
     volumes:
       - llm_models:/data
     ports:
       - "8080:80"
     shm_size: 1g
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     networks:
       - vision_network
     restart: unless-stopped
