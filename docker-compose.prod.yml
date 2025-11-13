@@ -1,0 +1,308 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: vision_postgres
+    environment:
+      POSTGRES_DB: visiondb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vision_network
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: vision_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vision_network
+    restart: unless-stopped
+
+  # ChromaDB Vector Database
+  chromadb:
+    image: chromadb/chroma:0.5.23
+    container_name: vision_chromadb
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+      - ANONYMIZED_TELEMETRY=False
+    volumes:
+      - chroma_data:/chroma/chroma
+    ports:
+      - "8001:8000"
+    networks:
+      - vision_network
+    restart: unless-stopped
+
+  # Local LLM Service (2B Parameter Model)
+  llm:
+    image: ghcr.io/huggingface/text-generation-inference:2.0
+    container_name: vision_llm
+    environment:
+      - MODEL_ID=microsoft/phi-2
+      - NUM_SHARD=1
+      - MAX_TOTAL_TOKENS=4096
+      - MAX_INPUT_LENGTH=2048
+      - MAX_BATCH_PREFILL_TOKENS=4096
+      - HUGGING_FACE_HUB_TOKEN=${HUGGINGFACE_TOKEN}
+    volumes:
+      - llm_models:/data
+    ports:
+      - "8080:80"
+    shm_size: 1g
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - vision_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
+  # Fallback LLM Service (CPU-only, if no GPU)
+  llm_cpu:
+    image: ghcr.io/ggerganov/llama.cpp:server
+    container_name: vision_llm_cpu
+    command: >
+      --model /models/phi-2.Q4_K_M.gguf
+      --host 0.0.0.0
+      --port 8080
+      --ctx-size 4096
+      --n-gpu-layers 0
+    volumes:
+      - llm_models:/models
+    ports:
+      - "8081:8080"
+    networks:
+      - vision_network
+    restart: unless-stopped
+    profiles:
+      - cpu-only
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vision_backend
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/visiondb
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - LLM_PROVIDER=local
+      - LOCAL_LLM_BASE_URL=http://llm:80
+      - LOCAL_LLM_MODEL=microsoft/phi-2
+    volumes:
+      - ./backend:/app
+      - upload_data:/data/uploads
+      - pubmed_data:/data/pubmed_pdfs
+      - processed_data:/data/processed
+      - logs_data:/data/logs
+      - ./data/msigdb:/data/msigdb
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chromadb:
+        condition: service_started
+      llm:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    networks:
+      - vision_network
+    restart: unless-stopped
+
+  # Celery Worker
+  celery_worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vision_celery_worker
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/visiondb
+      - REDIS_URL=redis://redis:6379/0
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - LLM_PROVIDER=local
+      - LOCAL_LLM_BASE_URL=http://llm:80
+      - LOCAL_LLM_MODEL=microsoft/phi-2
+    volumes:
+      - ./backend:/app
+      - upload_data:/data/uploads
+      - pubmed_data:/data/pubmed_pdfs
+      - processed_data:/data/processed
+      - logs_data:/data/logs
+      - ./data/msigdb:/data/msigdb
+    depends_on:
+      - redis
+      - postgres
+      - chromadb
+      - llm
+    command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=2
+    networks:
+      - vision_network
+    restart: unless-stopped
+
+  # Celery Beat (Scheduled Tasks)
+  celery_beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vision_celery_beat
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/visiondb
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+    volumes:
+      - ./backend:/app
+      - ./data/msigdb:/data/msigdb
+    depends_on:
+      - redis
+      - postgres
+    command: celery -A app.celery_app.celery_app beat --loglevel=info
+    networks:
+      - vision_network
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: vision_frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://eye.som.uci.edu:8000
+      - NEXT_PUBLIC_WS_URL=ws://eye.som.uci.edu:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - vision_network
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy (using port 8888 instead of 80)
+  nginx:
+    image: nginx:alpine
+    container_name: vision_nginx
+    volumes:
+      - ./nginx/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8888:80"
+      - "8443:443"
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - vision_network
+    restart: unless-stopped
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: vision_prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - vision_network
+    restart: unless-stopped
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: vision_grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - vision_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  chroma_data:
+    driver: local
+  upload_data:
+    driver: local
+  pubmed_data:
+    driver: local
+  processed_data:
+    driver: local
+  logs_data:
+    driver: local
+  llm_models:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  vision_network:
+    driver: bridge
+
