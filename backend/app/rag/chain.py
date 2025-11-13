@@ -407,14 +407,6 @@ Answer:"""
         Returns:
             Dictionary with answer and source documents
         """
-        # Pre-filter: Check if question is vision-related
-        if not self._is_vision_related(question):
-            return {
-                "answer": "OUT_OF_SCOPE",
-                "source_documents": [],
-                "citations": []
-            }
-        
         # Ensure LLM is initialized
         self._ensure_initialized()
         
@@ -494,25 +486,28 @@ Answer:"""
         ])
         
         # Create prompt using shared template
-        prompt = f"""{self.SCOPE_AND_INSTRUCTIONS}
+        prompt = f"""You are a specialized AI assistant for vision research and ophthalmology. You can ONLY answer questions about:
+- Eye diseases, anatomy, and physiology
+- Vision disorders and treatments  
+- Ophthalmology and optometry
+- Eye-related genetics and research
 
 Context from PubMed research papers:
 {context}
 
-Chat History (use this to understand the conversation context and what the user is asking about):
+Chat History:
 {chat_history_text}
 
-Current Question: {question}
+Question: {question}
 
-CRITICAL INSTRUCTIONS:
-1. You can ONLY answer questions about eye/vision research, ophthalmology, and related medical topics.
-2. If the question is about movies, celebrities, general knowledge, politics, sports, or ANY non-medical topic, you MUST respond with EXACTLY: "OUT_OF_SCOPE"
-3. Do NOT make up information. Only use the PubMed research context provided above.
-4. If the context doesn't contain relevant information, say you don't have enough information.
+INSTRUCTIONS:
+Step 1: First, determine if this question is about eye/vision/ophthalmology topics.
+- If YES (e.g., "what is retina", "AMD treatment", "glaucoma symptoms"): Proceed to Step 2
+- If NO (e.g., "who is Tony Stark", "capital of France", "how to cook pasta"): Respond with EXACTLY "OUT_OF_SCOPE" and nothing else
 
-Now provide your answer based ONLY on the PubMed literature context above:
+Step 2: If the question IS about eye/vision topics, provide a detailed answer using ONLY the PubMed research context above. Do not make up information.
 
-Answer:"""
+Your response:"""
         
         # Get response from LLM
         try:
