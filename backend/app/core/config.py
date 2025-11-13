@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
     TEMPERATURE: float = 0.7
-    MAX_TOKENS: int = 512  # Max tokens for response generation (Phi-2 context window is 2048 total)
+    MAX_TOKENS: int = 800  # Max tokens for response generation (allows 3-5 paragraph responses)
     TOP_P: float = 0.9
     
     # PubMed
