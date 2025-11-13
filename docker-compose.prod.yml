@@ -55,32 +55,38 @@ services:
       - vision_network
     restart: unless-stopped
 
-  # Local LLM Service (2B Parameter Model) - CPU Mode
+  # Local LLM Service (2B Parameter Model) - CPU Mode using Ollama
   llm:
-    image: ghcr.io/huggingface/text-generation-inference:2.0
+    image: ollama/ollama:latest
     container_name: vision_llm
-    environment:
-      - MODEL_ID=microsoft/phi-2
-      - NUM_SHARD=1
-      - MAX_TOTAL_TOKENS=4096
-      - MAX_INPUT_LENGTH=2048
-      - MAX_BATCH_PREFILL_TOKENS=4096
-      - HUGGING_FACE_HUB_TOKEN=${HUGGINGFACE_TOKEN}
-      - CUDA_VISIBLE_DEVICES=""
     volumes:
-      - llm_models:/data
+      - llm_models:/root/.ollama
     ports:
-      - "8082:80"
-    shm_size: 1g
+      - "11434:11434"
     networks:
       - vision_network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:11434/"]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 120s
+      start_period: 60s
+  
+  # Model puller - downloads the phi model on first run
+  llm_puller:
+    image: ollama/ollama:latest
+    container_name: vision_llm_puller
+    volumes:
+      - llm_models:/root/.ollama
+    networks:
+      - vision_network
+    depends_on:
+      llm:
+        condition: service_healthy
+    command: pull phi
+    profiles:
+      - setup
 
   # Fallback LLM Service (CPU-only, if no GPU)
   llm_cpu:
@@ -121,8 +127,8 @@ services:
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
       - LLM_PROVIDER=local
-      - LOCAL_LLM_BASE_URL=http://llm:80
-      - LOCAL_LLM_MODEL=microsoft/phi-2
+      - LOCAL_LLM_BASE_URL=http://llm:11434/v1
+      - LOCAL_LLM_MODEL=phi
     volumes:
       - ./backend:/app
       - upload_data:/data/uploads
@@ -162,8 +168,8 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/2
       - LLM_PROVIDER=local
-      - LOCAL_LLM_BASE_URL=http://llm:80
-      - LOCAL_LLM_MODEL=microsoft/phi-2
+      - LOCAL_LLM_BASE_URL=http://llm:11434/v1
+      - LOCAL_LLM_MODEL=phi
     volumes:
       - ./backend:/app
       - upload_data:/data/uploads
