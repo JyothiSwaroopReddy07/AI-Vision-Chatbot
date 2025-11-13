@@ -136,8 +136,14 @@ for i in {1..30}; do
     sleep 2
 done
 
-# Run migrations
+# Wait for LLM to be ready
 echo ""
+echo "Waiting for LLM service to download model and start (this may take 10-15 minutes)..."
+echo "You can monitor progress in another terminal with:"
+echo "  docker-compose -f docker-compose.prod.yml logs -f llm"
+echo ""
+
+# Run migrations
 echo "Running database migrations..."
 sleep 5
 docker-compose -f docker-compose.prod.yml exec -T backend alembic upgrade head 2>/dev/null || echo "⚠️  Run migrations manually: docker-compose -f docker-compose.prod.yml exec backend alembic upgrade head"
