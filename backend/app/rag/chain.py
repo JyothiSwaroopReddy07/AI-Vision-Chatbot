@@ -204,7 +204,7 @@ IMPORTANT INSTRUCTIONS:
                 openai_api_key=settings.OPENAI_API_KEY
             )
         elif settings.LLM_PROVIDER == "local":
-            # Local LLM using OpenAI-compatible API (TGI, vLLM, llama.cpp)
+            # Local LLM using OpenAI-compatible API (Ollama)
             return ChatOpenAI(
                 model=settings.LOCAL_LLM_MODEL,
                 temperature=settings.TEMPERATURE,
@@ -213,6 +213,9 @@ IMPORTANT INSTRUCTIONS:
                 openai_api_base=settings.LOCAL_LLM_BASE_URL,
                 model_kwargs={
                     "top_p": settings.TOP_P,
+                    "num_ctx": 2048,  # Context window size for Phi-2
+                    "num_predict": 512,  # Max tokens to generate
+                    "repeat_penalty": 1.1,  # Reduce repetition
                 }
             )
         else:
@@ -505,9 +508,17 @@ Step 1: First, determine if this question is about eye/vision/ophthalmology topi
 - If YES (e.g., "what is retina", "AMD treatment", "glaucoma symptoms"): Proceed to Step 2
 - If NO (e.g., "who is Tony Stark", "capital of France", "how to cook pasta"): Respond with EXACTLY "OUT_OF_SCOPE" and nothing else
 
-Step 2: If the question IS about eye/vision topics, provide a detailed answer using ONLY the PubMed research context above. Do not make up information.
+Step 2: If the question IS about eye/vision topics, provide a COMPREHENSIVE and DETAILED answer using the PubMed research context above. Your answer should:
+- Be thorough and informative (aim for 3-5 paragraphs)
+- Include specific details from the research papers
+- Explain key concepts clearly
+- Mention relevant clinical findings, mechanisms, or treatments when applicable
+- Use scientific terminology while remaining accessible
+- Reference multiple sources from the context when available
 
-Your response:"""
+Do not make up information. Only use facts from the PubMed context provided.
+
+Your detailed response:"""
         
         # Get response from LLM
         try:
