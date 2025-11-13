@@ -213,9 +213,6 @@ IMPORTANT INSTRUCTIONS:
                 openai_api_base=settings.LOCAL_LLM_BASE_URL,
                 model_kwargs={
                     "top_p": settings.TOP_P,
-                    "num_ctx": 2048,  # Context window size for Phi-2
-                    "num_predict": 512,  # Max tokens to generate
-                    "repeat_penalty": 1.1,  # Reduce repetition
                 }
             )
         else:
