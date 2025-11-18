@@ -672,9 +672,9 @@ Your response:"""
                     })
                     
                     # Check if the last assistant message has MSigDB results
-                    if msg.role == "assistant" and hasattr(msg, 'metadata') and msg.metadata:
-                        if 'msigdb_results' in msg.metadata:
-                            previous_msigdb_results = msg.metadata['msigdb_results']
+                    if msg.role == "assistant" and msg.message_metadata:
+                        if 'msigdb_results' in msg.message_metadata:
+                            previous_msigdb_results = msg.message_metadata['msigdb_results']
             
             # Now add the current user message
             user_message = await self.add_message(
