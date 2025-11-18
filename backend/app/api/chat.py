@@ -20,7 +20,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     collection_names: List[str] | None = None
     retrieval_k: int | None = None
-    search_type: str = "pubmed"  # "pubmed" or "msigdb"
+    search_type: str = "none"  # "none" (direct LLM), "pubmed" (RAG), or "msigdb" (gene sets)
 
 
 class Citation(BaseModel):
