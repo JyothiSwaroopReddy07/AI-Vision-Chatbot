@@ -330,7 +330,7 @@ interface MSigDBState {
 }
 
 export const useMSigDBStore = create<MSigDBState>((set) => ({
-  searchType: 'none',
+  searchType: 'pubmed',
   currentResults: null,
   selectedGeneSet: null,
   showResultsPanel: false,
