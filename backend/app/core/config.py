@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
     TEMPERATURE: float = 0.7
-    MAX_TOKENS: int = 800  # Max tokens for response generation (allows 3-5 paragraph responses)
+    MAX_TOKENS: int = 2000  # Max tokens for response generation (allows longer, detailed responses)
     TOP_P: float = 0.9
     
     # PubMed
