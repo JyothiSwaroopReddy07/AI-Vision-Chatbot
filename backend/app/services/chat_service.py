@@ -475,14 +475,14 @@ Answer based only on the data above:"""
                     elif role == "assistant":
                         chat_history_text += f"Assistant: {content}\n"
             
-            # Create simple prompt for direct LLM chat
+            # Create simple prompt for direct LLM chat with instruction for detailed responses
             if chat_history_text:
                 prompt = f"""{chat_history_text}
 User: {message}
-Assistant:"""
+Assistant: Let me provide a detailed answer."""
             else:
                 prompt = f"""User: {message}
-Assistant:"""
+Assistant: Let me provide a detailed answer."""
             
             # Get response from LLM with lower temperature for better quality
             from langchain_openai import ChatOpenAI
