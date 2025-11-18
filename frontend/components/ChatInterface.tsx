@@ -11,20 +11,12 @@ import SourcesModal from './SourcesModal'
 import SearchTypeToggle from './SearchTypeToggle'
 import MsigDBResultsPanel from './MsigDBResultsPanel'
 
-interface SpellCorrection {
-  original: string
-  corrected: string
-  type: string
-}
-
 interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
   citations?: Citation[]
   timestamp: Date
-  spell_corrections?: SpellCorrection[]
-  original_query?: string
   msigdb_results?: any  // Store MSigDB results with each message
 }
 
@@ -175,8 +167,6 @@ export default function ChatInterface() {
         content: data.response || 'No response',
         citations: data.citations || [],
         timestamp: new Date(),
-        spell_corrections: data.spell_corrections || undefined,
-        original_query: data.original_query || undefined,
         msigdb_results: data.msigdb_results || undefined,
       }
 
@@ -296,8 +286,6 @@ export default function ChatInterface() {
         content: data.response || 'No response',
         citations: data.citations || [],
         timestamp: new Date(),
-        spell_corrections: data.spell_corrections || undefined,
-        original_query: data.original_query || undefined,
         msigdb_results: data.msigdb_results || undefined,
       }
 
@@ -325,36 +313,14 @@ export default function ChatInterface() {
     setEditedContent('')
   }
 
-  const renderMessageWithCitations = (content: string, citations?: Citation[], isUser: boolean = false, spellCorrections?: SpellCorrection[], originalQuery?: string) => {
+  const renderMessageWithCitations = (content: string, citations?: Citation[], isUser: boolean = false) => {
     // For user messages, render larger text without markdown
     if (isUser) {
       return <div className="user-query-text">{content}</div>
     }
     
-    // For assistant messages, render markdown with spell correction notice if applicable
+    // For assistant messages, render markdown
     return (
-      <>
-        {spellCorrections && spellCorrections.length > 0 && (
-          <div className="spell-correction-notice">
-            <div className="flex items-start gap-2 text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-              <svg className="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div className="flex-1">
-                <div className="font-medium mb-1">✓ Spell check applied</div>
-                <div className="text-xs">
-                  {spellCorrections.map((correction, idx) => (
-                    <div key={idx} className="mb-1">
-                      <span className="line-through opacity-70">{correction.original}</span>
-                      {' → '}
-                      <span className="font-medium">{correction.corrected}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       <div className="assistant-response-text">
         <ReactMarkdown
           components={{
@@ -375,7 +341,6 @@ export default function ChatInterface() {
           {content}
         </ReactMarkdown>
       </div>
-      </>
     )
   }
 
@@ -610,9 +575,7 @@ export default function ChatInterface() {
                     renderMessageWithCitations(
                       message.content, 
                       message.citations, 
-                      message.role === 'user',
-                      message.spell_corrections,
-                      message.original_query
+                      message.role === 'user'
                     )
                   )}
                   

@@ -13,7 +13,6 @@ from app.models.citation import Citation
 from app.rag.chain import rag_chain
 from app.core.config import settings
 from app.rag.vector_store import vector_store_manager
-from app.utils.spell_checker import correct_user_query
 import logging
 
 logger = logging.getLogger(__name__)
@@ -439,21 +438,6 @@ class ChatService:
         """
         try:
             # ============================================
-            # SPELL CHECKING - Correct user query first
-            # ============================================
-            original_message = message
-            corrected_message, corrections = correct_user_query(message)
-            
-            # Log corrections if any were made
-            if corrections:
-                logger.info(f"Spell corrections made for query: {corrections}")
-                logger.info(f"Original: '{original_message}' -> Corrected: '{corrected_message}'")
-            
-            # Use the corrected message for processing
-            message = corrected_message
-            # ============================================
-            
-            # ============================================
             # MSIGDB SEARCH - If search_type is msigdb
             # ============================================
             msigdb_results_data = None
@@ -602,8 +586,6 @@ class ChatService:
                 "response": answer,
                 "citations": citations,
                 "source_documents": len(source_docs),
-                "spell_corrections": corrections if corrections else None,  # Include spell corrections in response
-                "original_query": original_message if corrections else None,  # Include original if corrections were made
                 "search_type": search_type,  # Include search type
                 "msigdb_results": msigdb_results_data if search_type == "msigdb" else None  # Include MSigDB results if applicable
             }
