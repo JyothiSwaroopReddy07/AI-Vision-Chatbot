@@ -475,22 +475,27 @@ Answer based only on the data above:"""
                     elif role == "assistant":
                         chat_history_text += f"Assistant: {content}\n"
             
-            # Create prompt for direct LLM chat
-            prompt = f"""You are a helpful AI assistant. You can answer questions on any topic to the best of your knowledge.
-
-Chat History:
-{chat_history_text}
-
-User's Question: {message}
-
-Provide a helpful, informative, and conversational response. Be thorough but concise. If you don't know something, admit it honestly.
-
-Your response:"""
+            # Create simple prompt for direct LLM chat
+            if chat_history_text:
+                prompt = f"""{chat_history_text}
+User: {message}
+Assistant:"""
+            else:
+                prompt = f"""User: {message}
+Assistant:"""
             
-            # Get response from LLM
-            from app.rag.chain import get_rag_chain
-            chain = get_rag_chain()
-            llm = chain._initialize_llm()
+            # Get response from LLM with lower temperature for better quality
+            from langchain_openai import ChatOpenAI
+            from app.core.config import settings
+            
+            llm = ChatOpenAI(
+                model=settings.LOCAL_LLM_MODEL,
+                temperature=0.3,  # Lower temperature for more focused responses
+                max_tokens=settings.MAX_TOKENS,
+                openai_api_key=settings.LOCAL_LLM_API_KEY,
+                openai_api_base=settings.LOCAL_LLM_BASE_URL,
+                model_kwargs={"top_p": 0.7}
+            )
             
             try:
                 if hasattr(llm, 'predict'):
