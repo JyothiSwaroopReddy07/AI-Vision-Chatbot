@@ -395,42 +395,30 @@ class ChatService:
                     elif role == "assistant":
                         chat_history_text += f"Assistant: {content}\n"
             
-            # Create prompt for LLM
-            prompt = f"""You are a specialized AI assistant for vision research and gene set analysis. You are helping a user understand MSigDB gene set enrichment results.
+            # Create prompt for LLM - simplified for small model
+            prompt = f"""Answer the question using ONLY the gene set data below. Do not make up information.
 
+Gene Set Data:
 {msigdb_context}
 
-Chat History:
-{chat_history_text}
+Question: {message}
 
-User's Follow-up Question: {message}
-
-INSTRUCTIONS:
-Provide a comprehensive and detailed answer to the user's follow-up question based on the MSigDB results above. Your answer should:
-
-1. **Directly address the user's question** using the specific gene set data provided
-2. **Reference specific gene sets by name** when relevant
-3. **Explain biological significance** of the pathways or gene sets mentioned
-4. **Provide statistical context** (p-values, overlap percentages) when appropriate
-5. **Be thorough and informative** (aim for 2-4 paragraphs)
-6. **Use scientific terminology** while remaining accessible
-7. **Connect findings to vision/eye research** when applicable
-
-If the user asks about:
-- "What do these results mean?" - Explain the biological significance of the top pathways
-- "Which pathway is most important?" - Discuss the most statistically significant results and their relevance
-- "Tell me more about X" - Provide detailed information about that specific gene set
-- "What genes are involved?" - List the matched genes and their roles
-- "How significant are these?" - Explain the p-values and statistical significance
-
-Do not make up information. Only use the MSigDB results provided above.
-
-Your detailed response:"""
+Answer based only on the data above:"""
             
-            # Get response from LLM
+            # Get response from LLM with lower temperature for factual answers
             from app.rag.chain import get_rag_chain
-            chain = get_rag_chain()
-            llm = chain._initialize_llm()
+            from langchain_openai import ChatOpenAI
+            from app.core.config import settings
+            
+            # Use lower temperature for more factual, less creative responses
+            llm = ChatOpenAI(
+                model=settings.LOCAL_LLM_MODEL,
+                temperature=0.1,  # Very low temperature for factual answers
+                max_tokens=settings.MAX_TOKENS,
+                openai_api_key=settings.LOCAL_LLM_API_KEY,
+                openai_api_base=settings.LOCAL_LLM_BASE_URL,
+                model_kwargs={"top_p": 0.5}  # Lower top_p for more focused responses
+            )
             
             try:
                 if hasattr(llm, 'predict'):
