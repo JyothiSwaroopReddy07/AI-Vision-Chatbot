@@ -342,6 +342,123 @@ class ChatService:
         
         return f"Research in this area shows interesting findings. {citations[0]['excerpt'][:300]}... Multiple studies have contributed to our understanding of this topic."
     
+    async def _generate_msigdb_followup_response(
+        self,
+        message: str,
+        msigdb_results: Dict[str, Any],
+        chat_history: List[Dict[str, str]]
+    ) -> tuple:
+        """
+        Generate LLM response for follow-up questions about MSigDB results
+        
+        Args:
+            message: User's follow-up question
+            msigdb_results: Previous MSigDB search results
+            chat_history: Chat history for context
+            
+        Returns:
+            Tuple of (answer, citations, source_docs)
+        """
+        try:
+            # Format MSigDB results for LLM context
+            num_results = msigdb_results.get("num_results", 0)
+            genes = msigdb_results.get("genes", [])
+            results = msigdb_results.get("results", [])
+            
+            # Create detailed context from MSigDB results
+            msigdb_context = f"Previous MSigDB Gene Set Search Results:\n\n"
+            msigdb_context += f"Searched Genes: {', '.join(genes)}\n"
+            msigdb_context += f"Total Gene Sets Found: {num_results}\n\n"
+            
+            if results:
+                msigdb_context += "Top Gene Sets:\n\n"
+                for i, result in enumerate(results[:10], 1):  # Include top 10 for context
+                    msigdb_context += f"{i}. {result['gene_set_name']}\n"
+                    msigdb_context += f"   Collection: {result['collection']}\n"
+                    msigdb_context += f"   Description: {result.get('description', 'N/A')}\n"
+                    msigdb_context += f"   Gene Set Size: {result['gene_set_size']} genes\n"
+                    msigdb_context += f"   Overlap: {result['overlap_count']} genes ({result['overlap_percentage']:.1f}%)\n"
+                    msigdb_context += f"   P-value: {result['p_value']:.2e}\n"
+                    msigdb_context += f"   Matched Genes: {', '.join(result['matched_genes'])}\n"
+                    if 'url' in result:
+                        msigdb_context += f"   URL: {result['url']}\n"
+                    msigdb_context += "\n"
+            
+            # Format chat history
+            chat_history_text = ""
+            if chat_history:
+                for msg in chat_history[-5:]:  # Last 5 messages
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role == "user":
+                        chat_history_text += f"User: {content}\n"
+                    elif role == "assistant":
+                        chat_history_text += f"Assistant: {content}\n"
+            
+            # Create prompt for LLM
+            prompt = f"""You are a specialized AI assistant for vision research and gene set analysis. You are helping a user understand MSigDB gene set enrichment results.
+
+{msigdb_context}
+
+Chat History:
+{chat_history_text}
+
+User's Follow-up Question: {message}
+
+INSTRUCTIONS:
+Provide a comprehensive and detailed answer to the user's follow-up question based on the MSigDB results above. Your answer should:
+
+1. **Directly address the user's question** using the specific gene set data provided
+2. **Reference specific gene sets by name** when relevant
+3. **Explain biological significance** of the pathways or gene sets mentioned
+4. **Provide statistical context** (p-values, overlap percentages) when appropriate
+5. **Be thorough and informative** (aim for 2-4 paragraphs)
+6. **Use scientific terminology** while remaining accessible
+7. **Connect findings to vision/eye research** when applicable
+
+If the user asks about:
+- "What do these results mean?" - Explain the biological significance of the top pathways
+- "Which pathway is most important?" - Discuss the most statistically significant results and their relevance
+- "Tell me more about X" - Provide detailed information about that specific gene set
+- "What genes are involved?" - List the matched genes and their roles
+- "How significant are these?" - Explain the p-values and statistical significance
+
+Do not make up information. Only use the MSigDB results provided above.
+
+Your detailed response:"""
+            
+            # Get response from LLM
+            from app.rag.chain import rag_chain
+            llm = rag_chain._initialize_llm()
+            
+            try:
+                if hasattr(llm, 'predict'):
+                    answer = llm.predict(prompt)
+                elif hasattr(llm, 'invoke'):
+                    response = llm.invoke(prompt)
+                    answer = response.content if hasattr(response, 'content') else str(response)
+                else:
+                    answer = llm(prompt)
+            except Exception as e:
+                logger.error(f"Error calling LLM for MSigDB follow-up: {e}")
+                # Fallback to a basic response
+                answer = f"Based on the MSigDB results, I found {num_results} gene sets related to your genes: {', '.join(genes)}. "
+                if results:
+                    answer += f"The most significant result is '{results[0]['gene_set_name']}' from the {results[0]['collection']} collection, "
+                    answer += f"with {results[0]['overlap_count']} matching genes and a p-value of {results[0]['p_value']:.2e}."
+            
+            # No citations for MSigDB follow-ups (the data is from MSigDB, not PubMed)
+            citations = []
+            source_docs = []
+            
+            return answer, citations, source_docs
+            
+        except Exception as e:
+            logger.error(f"Error in _generate_msigdb_followup_response: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"I apologize, but I encountered an error while processing your follow-up question: {str(e)}. Please try again.", [], []
+    
     def _generate_smart_response(self, message: str, chat_history: List[Dict[str, str]]) -> str:
         """Generate a smart response based on message content and history"""
         # Analyze the message for intent
@@ -471,6 +588,7 @@ class ChatService:
             # Build chat history for context BEFORE adding the current message
             # This way the current question isn't included in the context
             chat_history = []
+            previous_msigdb_results = None
             if session_id:
                 # For existing sessions, get the message history
                 from sqlalchemy import select
@@ -489,6 +607,11 @@ class ChatService:
                         "role": msg.role,
                         "content": msg.content
                     })
+                    
+                    # Check if the last assistant message has MSigDB results
+                    if msg.role == "assistant" and hasattr(msg, 'metadata') and msg.metadata:
+                        if 'msigdb_results' in msg.metadata:
+                            previous_msigdb_results = msg.metadata['msigdb_results']
             
             # Now add the current user message
             user_message = await self.add_message(
@@ -497,6 +620,21 @@ class ChatService:
                 role="user",
                 content=message
             )
+            
+            # Check if this is a follow-up question about previous MSigDB results
+            is_msigdb_followup = False
+            if search_type == "pubmed" and previous_msigdb_results and len(chat_history) > 0:
+                # Detect if this is a follow-up question about gene sets
+                followup_keywords = [
+                    "these", "those", "them", "it", "this", "that",
+                    "gene set", "pathway", "result", "finding", "overlap",
+                    "what does", "tell me more", "explain", "describe",
+                    "which one", "how many", "what are", "show me"
+                ]
+                message_lower = message.lower()
+                if any(keyword in message_lower for keyword in followup_keywords):
+                    is_msigdb_followup = True
+                    logger.info(f"Detected MSigDB follow-up question: {message}")
             
             # Check if it's MSigDB search or PubMed search
             if search_type == "msigdb" and msigdb_results_data:
@@ -525,6 +663,16 @@ class ChatService:
                 
                 citations = []
                 source_docs = []
+            elif is_msigdb_followup and previous_msigdb_results:
+                # Handle follow-up questions about MSigDB results using LLM
+                logger.info("Processing MSigDB follow-up question with LLM")
+                answer, citations, source_docs = await self._generate_msigdb_followup_response(
+                    message=message,
+                    msigdb_results=previous_msigdb_results,
+                    chat_history=chat_history
+                )
+                # Keep the MSigDB results for potential further follow-ups
+                msigdb_results_data = previous_msigdb_results
             else:
                 # Check if it's a simple greeting or casual message
                 message_lower = message.lower().strip()
@@ -562,9 +710,11 @@ class ChatService:
                 "search_type": search_type
             }
             
-            # Include MSigDB query_id in metadata if applicable
-            if search_type == "msigdb" and msigdb_results_data:
+            # Include MSigDB results in metadata if applicable (for follow-up questions)
+            if msigdb_results_data:
                 message_metadata["msigdb_query_id"] = msigdb_results_data.get("query_id")
+                # Store full results for follow-up questions
+                message_metadata["msigdb_results"] = msigdb_results_data
             
             assistant_message = await self.add_message(
                 db=db,
