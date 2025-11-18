@@ -313,7 +313,7 @@ interface GeneSetResult {
 }
 
 interface MSigDBState {
-  searchType: 'pubmed' | 'msigdb'
+  searchType: 'none' | 'pubmed' | 'msigdb'
   currentResults: GeneSetResult[] | null
   selectedGeneSet: GeneSetResult | null
   showResultsPanel: boolean
@@ -321,7 +321,7 @@ interface MSigDBState {
   queryGenes: string[]
   species: string
   numResults: number
-  setSearchType: (type: 'pubmed' | 'msigdb') => void
+  setSearchType: (type: 'none' | 'pubmed' | 'msigdb') => void
   setResults: (results: GeneSetResult[] | null, genes?: string[], species?: string, numResults?: number) => void
   setSelectedGeneSet: (geneSet: GeneSetResult | null) => void
   setShowResultsPanel: (show: boolean) => void
@@ -330,7 +330,7 @@ interface MSigDBState {
 }
 
 export const useMSigDBStore = create<MSigDBState>((set) => ({
-  searchType: 'pubmed',
+  searchType: 'none',
   currentResults: null,
   selectedGeneSet: null,
   showResultsPanel: false,

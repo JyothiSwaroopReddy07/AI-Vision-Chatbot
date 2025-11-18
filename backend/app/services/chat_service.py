@@ -459,6 +459,69 @@ Your detailed response:"""
             traceback.print_exc()
             return f"I apologize, but I encountered an error while processing your follow-up question: {str(e)}. Please try again.", [], []
     
+    async def _generate_direct_llm_response(
+        self,
+        message: str,
+        chat_history: List[Dict[str, str]]
+    ) -> str:
+        """
+        Generate direct LLM response without RAG or database search
+        
+        Args:
+            message: User's question
+            chat_history: Chat history for context
+            
+        Returns:
+            LLM response string
+        """
+        try:
+            # Format chat history
+            chat_history_text = ""
+            if chat_history:
+                for msg in chat_history[-10:]:  # Last 10 messages for context
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    if role == "user":
+                        chat_history_text += f"User: {content}\n"
+                    elif role == "assistant":
+                        chat_history_text += f"Assistant: {content}\n"
+            
+            # Create prompt for direct LLM chat
+            prompt = f"""You are a helpful AI assistant. You can answer questions on any topic to the best of your knowledge.
+
+Chat History:
+{chat_history_text}
+
+User's Question: {message}
+
+Provide a helpful, informative, and conversational response. Be thorough but concise. If you don't know something, admit it honestly.
+
+Your response:"""
+            
+            # Get response from LLM
+            from app.rag.chain import rag_chain
+            llm = rag_chain._initialize_llm()
+            
+            try:
+                if hasattr(llm, 'predict'):
+                    answer = llm.predict(prompt)
+                elif hasattr(llm, 'invoke'):
+                    response = llm.invoke(prompt)
+                    answer = response.content if hasattr(response, 'content') else str(response)
+                else:
+                    answer = llm(prompt)
+            except Exception as e:
+                logger.error(f"Error calling LLM for direct chat: {e}")
+                answer = "I apologize, but I'm having trouble generating a response right now. Please try again."
+            
+            return answer
+            
+        except Exception as e:
+            logger.error(f"Error in _generate_direct_llm_response: {e}")
+            import traceback
+            traceback.print_exc()
+            return f"I apologize, but I encountered an error: {str(e)}. Please try again."
+    
     def _generate_smart_response(self, message: str, chat_history: List[Dict[str, str]]) -> str:
         """Generate a smart response based on message content and history"""
         # Analyze the message for intent
@@ -673,6 +736,15 @@ Your detailed response:"""
                 )
                 # Keep the MSigDB results for potential further follow-ups
                 msigdb_results_data = previous_msigdb_results
+            elif search_type == "none":
+                # Direct LLM chat without RAG or MSigDB
+                logger.info("Processing direct LLM chat (no RAG)")
+                answer = await self._generate_direct_llm_response(
+                    message=message,
+                    chat_history=chat_history
+                )
+                citations = []
+                source_docs = []
             else:
                 # Check if it's a simple greeting or casual message
                 message_lower = message.lower().strip()
