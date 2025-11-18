@@ -428,8 +428,9 @@ Do not make up information. Only use the MSigDB results provided above.
 Your detailed response:"""
             
             # Get response from LLM
-            from app.rag.chain import rag_chain
-            llm = rag_chain._initialize_llm()
+            from app.rag.chain import get_rag_chain
+            chain = get_rag_chain()
+            llm = chain._initialize_llm()
             
             try:
                 if hasattr(llm, 'predict'):
@@ -499,8 +500,9 @@ Provide a helpful, informative, and conversational response. Be thorough but con
 Your response:"""
             
             # Get response from LLM
-            from app.rag.chain import rag_chain
-            llm = rag_chain._initialize_llm()
+            from app.rag.chain import get_rag_chain
+            chain = get_rag_chain()
+            llm = chain._initialize_llm()
             
             try:
                 if hasattr(llm, 'predict'):
